@@ -4896,8 +4896,13 @@ catch (sycl::exception const &exc) {
 
 static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * sycl_ctx, ggml_cgraph * cgraph) {
     ggml_sycl_set_main_device(sycl_ctx->device);
+    const dpct::queue_ptr stream = &dpct::get_default_queue();
 
     for (int i = 0; i < cgraph->n_nodes; i++) {
+        if(i%60==0){
+            GGML_SYCL_DEBUG("[SYCL] %s wait()\n", __func__);
+            SYCL_CHECK(CHECK_TRY_ERROR((stream)->wait()));
+        }
         ggml_tensor * node = cgraph->nodes[i];
         if (ggml_is_empty(node) || node->op == GGML_OP_RESHAPE || node->op == GGML_OP_TRANSPOSE || node->op == GGML_OP_VIEW || node->op == GGML_OP_PERMUTE || node->op == GGML_OP_NONE) {
             continue;
