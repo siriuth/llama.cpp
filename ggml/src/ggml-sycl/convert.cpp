@@ -823,6 +823,8 @@ static void convert_unary_nc_sycl(const void * __restrict__ vx, dst_t * __restri
                         );
                     }
         );
+
+    });
 }
 
 template <typename src_t, typename dst_t>
