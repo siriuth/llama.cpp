@@ -10,6 +10,8 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 
+// ggml_backend_sycl_device_supports_op comment out
+
 #include <algorithm>
 #include <assert.h>
 #include <atomic>
@@ -5808,8 +5810,8 @@ static bool do_ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, cons
 
 static bool ggml_backend_sycl_device_supports_op(ggml_backend_dev_t dev, const ggml_tensor * op) {
     bool res = do_ggml_backend_sycl_device_supports_op(dev, op);
-    GGML_SYCL_DEBUG("[SYCL] call %s op->op=%s op->type=%s -> %s\n", __func__, ggml_op_name(op->op),
-                    ggml_type_name(op->type), res ? "true" : "false");
+    //GGML_SYCL_DEBUG("[SYCL] call %s op->op=%s op->type=%s -> %s\n", __func__, ggml_op_name(op->op),
+    //                ggml_type_name(op->type), res ? "true" : "false");
     return res;
 }
 
