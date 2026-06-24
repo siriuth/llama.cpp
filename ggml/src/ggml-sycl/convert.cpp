@@ -1,10 +1,33 @@
 #include "convert.hpp"
 #include "dequantize.hpp"
 #include "presets.hpp"
+#include "siriuth.hpp"
+
+
+#define SYCL_DEQUANTIZE_WORK_GROUP_NUM 99999
+#define SYCL_DEQUANTIZE_WORK_GROUP_SIZE 32
+#define SYCL_DEQUANTIZE_SUB_GROUP_SIZE 16
+
+//#define MAX_GRIDDIM_Y 65535
+//#define MAX_GRIDDIM_Z 65535
+#define SYCL_UNARY_WORK_GROUP_NUM 99999
+//#define MAX_GRIDDIM_Y 512
+//#define MAX_GRIDDIM_Z 512
+//#define MAX_WORK_GROUP_SIZE 512
+#define SYCL_UNARY_WORK_GROUP_SIZE 32
+#define SYCL_UNARY_SUB_GROUP_SIZE 16
+//#define SYCL_UNARRAY_BLOCK_SIZE 8   //  36.39s   662
+//#define SYCL_UNARRAY_BLOCK_SIZE 16  //  29.98s   657 vae best
+//#define SYCL_UNARRAY_BLOCK_SIZE 32  //  30.71s   655
+//#define SYCL_UNARRAY_BLOCK_SIZE 64  //  36.12s   653 total best
+//#define SYCL_UNARRAY_BLOCK_SIZE 128 //  50.88s   667
+//#define SYCL_UNARRAY_BLOCK_SIZE 256 //  81.16s   697
+//#define SYCL_UNARRAY_BLOCK_SIZE 512 // 142.24s   762
 
 template <int qk, int qr, dequantize_kernel_t dequantize_kernel, typename dst_t>
 static void dequantize_block(const void * __restrict__ vx, dst_t * __restrict__ y, const int64_t k,
                              const sycl::nd_item<3> &item_ct1) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
     const int64_t i = 2 * (item_ct1.get_local_range(2) * item_ct1.get_group(2) +
                        item_ct1.get_local_id(2));
 
@@ -29,6 +52,7 @@ template <int qk, int qr, dequantize_kernel_t dequantize_kernel, typename dst_t>
 static void dequantize_block_sycl(const void *__restrict__ vx,
                                   dst_t *__restrict__ y, const int64_t k,
                                   dpct::queue_ptr stream) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
     const int64_t num_blocks = (k + 2*SYCL_DEQUANTIZE_BLOCK_SIZE - 1) / (2*SYCL_DEQUANTIZE_BLOCK_SIZE);
     {
         dpct::has_capability_or_fail(stream->get_device(),
@@ -47,6 +71,7 @@ static void dequantize_block_sycl(const void *__restrict__ vx,
 template <typename dst_t>
 static void dequantize_row_q2_K_sycl(const void *vx, dst_t *y, const int64_t k,
                                      dpct::queue_ptr stream) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
     const int64_t nb = k / QK_K;
 #if QK_K == 256
     {
@@ -79,6 +104,7 @@ static void dequantize_row_q2_K_sycl(const void *vx, dst_t *y, const int64_t k,
 template <typename dst_t>
 static void dequantize_row_q3_K_sycl(const void *vx, dst_t *y, const int64_t k,
                                      dpct::queue_ptr stream) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
     const int64_t nb = k / QK_K;
 #if QK_K == 256
     {
@@ -110,6 +136,7 @@ static void dequantize_row_q3_K_sycl(const void *vx, dst_t *y, const int64_t k,
 template <typename dst_t>
 static void dequantize_row_q3_K_sycl_reorder(const void *vx, dst_t *y, const int64_t k,
                                              dpct::queue_ptr stream) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
     const int64_t nb = k / QK_K;
 
     dpct::has_capability_or_fail(stream->get_device(), { sycl::aspect::fp16 });
@@ -123,6 +150,7 @@ static void dequantize_row_q3_K_sycl_reorder(const void *vx, dst_t *y, const int
 template <typename dst_t>
 static void dequantize_row_q4_0_sycl(const void *vx, dst_t *y, const int64_t k,
                                      dpct::queue_ptr stream) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
     const int64_t nb32 = k / 32;
     const int64_t nb = (k + 255) / 256;
     {
@@ -142,6 +170,7 @@ template <typename dst_t>
 static void dequantize_row_q4_0_sycl_reorder(const void *vx, dst_t *y, const int64_t k,
                                      dpct::queue_ptr stream) {
 
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
     dpct::has_capability_or_fail(stream->get_device(),
                                     {sycl::aspect::fp16});
 
@@ -161,6 +190,7 @@ template <typename dst_t>
 static void dequantize_row_q8_0_sycl_reorder(const void *vx, dst_t *y, const int64_t k,
                                      dpct::queue_ptr stream) {
 
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
     dpct::has_capability_or_fail(stream->get_device(),
                                     {sycl::aspect::fp16});
 
@@ -179,6 +209,7 @@ static void dequantize_row_q8_0_sycl_reorder(const void *vx, dst_t *y, const int
 template <typename dst_t>
 static void dequantize_row_q4_1_sycl(const void *vx, dst_t *y, const int64_t k,
                                      dpct::queue_ptr stream) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
     const int64_t nb32 = k / 32;
     const int64_t nb = (k + 255) / 256;
     {
@@ -198,6 +229,7 @@ static void dequantize_row_q4_1_sycl(const void *vx, dst_t *y, const int64_t k,
 template <typename dst_t>
 static void dequantize_row_q4_K_sycl(const void *vx, dst_t *y, const int64_t k,
                                      dpct::queue_ptr stream) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
     const int64_t nb = k / QK_K;
     {
         dpct::has_capability_or_fail(stream->get_device(),
@@ -217,6 +249,7 @@ static void dequantize_row_q4_K_sycl(const void *vx, dst_t *y, const int64_t k,
 
 template <typename dst_t>
 static void dequantize_row_q4_K_sycl_reorder(const void * vx, dst_t * y, const int64_t k, dpct::queue_ptr stream) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
     const int64_t nb = k / QK_K;
     const size_t  local_size  = 32;
     const size_t  global_size = nb * local_size;
@@ -236,6 +269,7 @@ static void dequantize_row_q4_K_sycl_reorder(const void * vx, dst_t * y, const i
 template <typename dst_t>
 static void dequantize_row_q5_K_sycl(const void *vx, dst_t *y, const int64_t k,
                                      dpct::queue_ptr stream) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
     const int64_t nb = k / QK_K;
 #if QK_K == 256
     {
@@ -267,6 +301,7 @@ static void dequantize_row_q5_K_sycl(const void *vx, dst_t *y, const int64_t k,
 
 template <typename dst_t>
 static void dequantize_row_q5_K_sycl_reorder(const void * vx, dst_t * y, const int64_t k, dpct::queue_ptr stream) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
     const int64_t nb = k / QK_K;
 
     dpct::has_capability_or_fail(stream->get_device(), { sycl::aspect::fp16 });
@@ -285,6 +320,7 @@ static void dequantize_row_q5_K_sycl_reorder(const void * vx, dst_t * y, const i
 template <typename dst_t>
 static void dequantize_row_q6_K_sycl(const void *vx, dst_t *y, const int64_t k,
                                      dpct::queue_ptr stream) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
     const int64_t nb = k / QK_K;
 #if QK_K == 256
     {
@@ -316,6 +352,7 @@ static void dequantize_row_q6_K_sycl(const void *vx, dst_t *y, const int64_t k,
 
 template <typename dst_t>
 static void dequantize_row_q6_K_sycl_reorder(const void * vx, dst_t * y, const int64_t k, dpct::queue_ptr stream) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
     const int64_t nb = k / QK_K;
 
     dpct::has_capability_or_fail(stream->get_device(), { sycl::aspect::fp16 });
@@ -328,6 +365,7 @@ static void dequantize_row_q6_K_sycl_reorder(const void * vx, dst_t * y, const i
 template <typename dst_t>
 static void dequantize_row_iq1_s_sycl(const void *vx, dst_t *y, const int64_t k,
                                         dpct::queue_ptr stream) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
     const int64_t nb = k / QK_K;
     {
         dpct::has_capability_or_fail(stream->get_device(),
@@ -349,6 +387,7 @@ static void dequantize_row_iq1_s_sycl(const void *vx, dst_t *y, const int64_t k,
 template <typename dst_t>
 static void dequantize_row_iq1_m_sycl(const void *vx, dst_t *y, const int64_t k,
                                         dpct::queue_ptr stream) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
     const int64_t nb = k / QK_K;
     {
         dpct::has_capability_or_fail(stream->get_device(),
@@ -370,6 +409,7 @@ static void dequantize_row_iq1_m_sycl(const void *vx, dst_t *y, const int64_t k,
 template <typename dst_t>
 static void dequantize_row_iq2_xxs_sycl(const void *vx, dst_t *y, const int64_t k,
                                         dpct::queue_ptr stream) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
     const int64_t nb = k / QK_K;
     {
         dpct::has_capability_or_fail(stream->get_device(),
@@ -391,6 +431,7 @@ static void dequantize_row_iq2_xxs_sycl(const void *vx, dst_t *y, const int64_t 
 template <typename dst_t>
 static void dequantize_row_iq2_xs_sycl(const void *vx, dst_t *y, const int64_t k,
                                        dpct::queue_ptr stream) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
     const int64_t nb = k / QK_K;
     {
         dpct::has_capability_or_fail(stream->get_device(),
@@ -412,6 +453,7 @@ static void dequantize_row_iq2_xs_sycl(const void *vx, dst_t *y, const int64_t k
 template <typename dst_t>
 static void dequantize_row_iq2_s_sycl(const void *vx, dst_t *y, const int64_t k,
                                       dpct::queue_ptr stream) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
     const int64_t nb = k / QK_K;
     {
         dpct::has_capability_or_fail(stream->get_device(),
@@ -432,6 +474,7 @@ static void dequantize_row_iq2_s_sycl(const void *vx, dst_t *y, const int64_t k,
 template <typename dst_t>
 static void dequantize_row_iq3_xxs_sycl(const void *vx, dst_t *y, const int64_t k,
                                         dpct::queue_ptr stream) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
     const int64_t nb = k / QK_K;
     {
         dpct::has_capability_or_fail(stream->get_device(),
@@ -453,6 +496,7 @@ static void dequantize_row_iq3_xxs_sycl(const void *vx, dst_t *y, const int64_t 
 template <typename dst_t>
 static void dequantize_row_iq3_s_sycl(const void *vx, dst_t *y, const int64_t k,
                                         dpct::queue_ptr stream) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
     const int64_t nb = k / QK_K;
     {
         dpct::has_capability_or_fail(stream->get_device(),
@@ -473,6 +517,7 @@ static void dequantize_row_iq3_s_sycl(const void *vx, dst_t *y, const int64_t k,
 template <typename dst_t>
 static void dequantize_row_iq4_xs_sycl(const void *vx, dst_t *y, const int64_t k,
                                        dpct::queue_ptr stream) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
     const int64_t nb = (k + QK_K - 1) / QK_K;
 #if QK_K == 64
     dequantize_row_iq4_nl_sycl(vx, y, k, stream);
@@ -497,6 +542,7 @@ static void dequantize_row_iq4_xs_sycl(const void *vx, dst_t *y, const int64_t k
 template <typename dst_t>
 static void dequantize_row_iq4_nl_sycl(const void *vx, dst_t *y, const int64_t k,
                                        dpct::queue_ptr stream) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
     const int64_t nb = (k + QK_K - 1) / QK_K;
       {
             dpct::has_capability_or_fail(stream->get_device(),
@@ -516,6 +562,7 @@ static void dequantize_row_iq4_nl_sycl(const void *vx, dst_t *y, const int64_t k
 
 template <typename dst_t>
 static void dequantize_row_mxfp4_sycl(const void * vx, dst_t * y, const int64_t k, dpct::queue_ptr stream) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
     const int nb = (k + QK_K - 1) / QK_K;
     stream->parallel_for(
         sycl::nd_range<3>(sycl::range<3>(1, 1, nb) * sycl::range<3>(1, 1, 32), sycl::range<3>(1, 1, 32)),
@@ -526,6 +573,7 @@ static void dequantize_row_mxfp4_sycl(const void * vx, dst_t * y, const int64_t 
 
 template <typename dst_t>
 static void dequantize_row_nvfp4_sycl(const void * vx, dst_t * y, const int64_t k, dpct::queue_ptr stream) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
     GGML_ASSERT(k % QK_NVFP4 == 0);
     const int nb = k / QK_NVFP4;
     stream->parallel_for(
@@ -535,7 +583,7 @@ static void dequantize_row_nvfp4_sycl(const void * vx, dst_t * y, const int64_t 
         });
 }
 
-
+/*
 template <int qk, int qr, dequantize_kernel_t dequantize_kernel, typename dst_t>
 static void dequantize_block_nc(const void * __restrict__ vx, dst_t * __restrict__ y,
         const int64_t ne00, const int64_t ne01, const int64_t ne02,
@@ -572,6 +620,48 @@ static void dequantize_block_nc(const void * __restrict__ vx, dst_t * __restrict
     y[iy0 + y_offset] = ggml_sycl_cast<dst_t>(v.y());
 }
 
+*/
+
+template <int qk, int qr, dequantize_kernel_t dequantize_kernel, typename dst_t>
+static void dequantize_block_nc_offset(const void * __restrict__ vx, dst_t * __restrict__ y,
+    const int64_t ne00, const int64_t ne01, const int64_t ne02, const int64_t ne03,
+    const int64_t s01, const int64_t s02, const int64_t s03,
+    const sycl::range<3> offset,
+    const sycl::nd_item<3> & item_ct1)
+{
+    //auto          item_ct1 = sycl::ext::oneapi::this_work_item::get_nd_item<3>();
+    //const int64_t i00 = 2 * (int64_t(item_ct1.get_local_range(2)) * item_ct1.get_group(2) + item_ct1.get_local_id(2));
+    const int64_t i00 = (item_ct1.get_global_id(2) + offset[2]) * 2;
+    const int64_t i01 = item_ct1.get_group(1) + offset[1];
+    const int64_t i02s= item_ct1.get_group(0) + offset[0];
+    const int64_t i02 = i02s / ne03;
+
+    if (i00 >= ne00 || i01 >= ne01 || i02s >= ne02*ne03 || i02 >= ne02) {
+        return;
+    }
+    const int64_t i03 = i02s % ne03;
+
+    const int64_t ibx0 = i03*s03 + i02*s02 + i01*s01;
+
+    const int64_t ib = ibx0 + i00/qk; // block index
+    const int64_t iqs = (i00%qk)/qr; // quant index
+    const int64_t iybs = i00 - i00%qk; // y block start index
+    const int64_t y_offset = qr == 1 ? 1 : qk/2;
+
+    // dequantize
+    #ifdef GGML_SYCL_F16
+        sycl::half2 v;
+    #else
+        sycl::float2 v;
+    #endif
+
+    dequantize_kernel(vx, ib, iqs, v);
+
+    const int64_t iy0 = ((i03*ne02 + i02)*ne01 + i01)*ne00 + iybs + iqs;
+    y[iy0 + 0]        = ggml_sycl_cast<dst_t>(v.x());
+    y[iy0 + y_offset] = ggml_sycl_cast<dst_t>(v.y());
+}
+
 
 template <int qk, int qr, dequantize_kernel_t dequantize_kernel, typename dst_t>
 static void dequantize_block_nc_sycl(const void *    vx,
@@ -584,6 +674,8 @@ static void dequantize_block_nc_sycl(const void *    vx,
                                   const int64_t   s02,
                                   const int64_t   s03,
                                   dpct::queue_ptr stream) {
+
+/*
     const dpct::dim3 num_blocks((ne00 + 2 * SYCL_DEQUANTIZE_BLOCK_SIZE - 1) / (2 * SYCL_DEQUANTIZE_BLOCK_SIZE), ne01,
                                 ne02 * ne03);
     stream->parallel_for(sycl::nd_range<3>(num_blocks * sycl::range<3>(1, 1, SYCL_DEQUANTIZE_BLOCK_SIZE),
@@ -592,53 +684,147 @@ static void dequantize_block_nc_sycl(const void *    vx,
                              GGML_UNUSED(item_ct1);
                              dequantize_block_nc<qk, qr, dequantize_kernel>(vx, y, ne00, ne01, ne02, s01, s02, s03);
                          });
+*/
+
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
+    sycl::range<3> world(ne03*ne02, ne01, ne00 / 2);
+    sycl::range<3> local(1, 1, SYCL_DEQUANTIZE_WORK_GROUP_SIZE);
+    ggml_sycl_looper(world, local, SYCL_DEQUANTIZE_WORK_GROUP_NUM, stream,
+        [=](sycl::range<3> global, sycl::range<3> offset){
+
+            stream->parallel_for(
+                sycl::nd_range<3>(global, local),
+                [=](sycl::nd_item<3> item_ct1)
+                [[sycl::reqd_sub_group_size(SYCL_DEQUANTIZE_SUB_GROUP_SIZE)]] {
+                    dequantize_block_nc_offset<qk, qr, dequantize_kernel>(
+                        vx, y,
+                        ne00, ne01, ne02, ne03,
+                        s01, s02, s03,
+                        offset, item_ct1);
+                });
+
+
+        }
+    );
+
 }
+
 template <typename src_t, typename dst_t>
-static void convert_unary_nc(const void * __restrict__ vx, dst_t * __restrict__ y, const int64_t ne00, const int64_t ne01,
-                          const int64_t ne02, const int64_t s01, const int64_t s02, const int64_t s03,
-                          const sycl::nd_item<3> & item_ct1) {
+static void convert_unary_nc_one_offset(
+    const void * __restrict__ vx, dst_t * __restrict__ y,
+    const int offset,
+    const sycl::nd_item<1> & item_ct1) {
 
-    const int64_t work_group_size = item_ct1.get_local_range(2);
-    const int64_t global_id       = item_ct1.get_local_id(2) + work_group_size * item_ct1.get_group(2);
-
-    const int64_t i01 = item_ct1.get_group(1);
-    const int64_t i02 = item_ct1.get_group(0) % ne02;
-    const int64_t i03 = item_ct1.get_group(0) / ne02;
-
-    // make each work-item deal with more elements since sycl global range can not exceed max int
+    const size_t i = item_ct1.get_global_id(0) + offset;
     const src_t * x = static_cast<const src_t *>(vx);
-    const int64_t ix = i03 * s03 + i02 * s02 + i01 * s01;
-    const int64_t iy = ((i03 * ne02 + i02) * ne01 + i01) * ne00;
+    y[i] = static_cast<dst_t>(x[i]);
+}
 
+/*
+template <typename src_t, typename dst_t>
+static void convert_unary_nc_one(const void * __restrict__ vx, dst_t * __restrict__ y,
+                          const sycl::nd_item<1> & item_ct1) {
+
+    const size_t offset = item_ct1.get_local_range(0) * item_ct1.get_group(0)
+                        + item_ct1.get_local_id(0);
+    const src_t * x = static_cast<const src_t *>(vx);
+    y[offset] = static_cast<dst_t>(x[offset]);
+}
+*/
+
+/*
+template <typename src_t, typename dst_t>
+static void convert_unary_nc_block(const void * __restrict__ vx, dst_t * __restrict__ y,
+//                          const int64_t ne00, const int64_t ne01,
+//                          const size_t offset_base, // item_ct1.get_local_range(0) * item_ct1.get_group(0)
+                          const sycl::nd_item<1> & item_ct1) {
+
+//    32 x 0..512
+    const size_t offset = item_ct1.get_local_range(0) * item_ct1.get_group(0)
+                        + item_ct1.get_local_id(0); // まちがってね？ｗ
+// 0..512 x local_id 0..32
+//    const size_t offset = offset_base + item_ct1.get_local_id(0);
+
+    const src_t * x = static_cast<const src_t *>(vx);
 #pragma unroll
-    for (int64_t i00 = global_id; i00 < ne00; i00 += work_group_size * item_ct1.get_group_range(2)) {
-        y[iy + i00] = static_cast<dst_t>(x[ix + i00]);
+    for (size_t i = 0; i < SYCL_UNARRAY_BLOCK_SIZE; i++) {
+        const size_t ix = offset + i;
+        //const size_t ix = item_ct1.get_local_id(0) + i;
+        //item_ct1.barrier();
+        y[ix] = static_cast<dst_t>(x[ix]);
     }
 }
+*/
+
+/*
+template <typename src_t, typename dst_t>
+static void convert_unary_nc(const void * __restrict__ vx, dst_t * __restrict__ y,
+                          const int64_t ne00, const int64_t ne01,
+                          const sycl::nd_item<1> & item_ct1) {
+
+    const size_t offset = item_ct1.get_local_range(0) * item_ct1.get_group(0);
+    const int64_t i00 = offset + item_ct1.get_local_id(0);
+
+    //if (i00 >= ne00) {
+    //    return;
+    //}
+
+    const src_t * x = static_cast<const src_t *>(vx);
+    // vae 512x512 96.11s
+    const size_t max = MIN(item_ct1.get_local_range(0), (size_t)(ne00 - i00));
+    for (size_t i = item_ct1.get_local_id(0); i < max; i++) {
+        //const int64_t ix = item_ct1.get_local_range(0) * item_ct1.get_group(0) + i;
+        const size_t ix = offset + i;
+        //const int64_t iy = ix;
+        //item_ct1.barrier();
+        y[ix] = static_cast<dst_t>(x[ix]);
+    }
+}
+*/
 
 template <typename src_t, typename dst_t>
 static void convert_unary_nc_sycl(const void * __restrict__ vx, dst_t * __restrict__ y,
-                                  const int64_t ne00, const int64_t ne01, const int64_t ne02, const int64_t ne03,
-                                  const int64_t s01, const int64_t s02, const int64_t s03, dpct::queue_ptr queue) {
+    // 引数の変数名は完全にデタラメ
+    //const int64_t ne00, const int64_t ne01,const int64_t ne02, const int64_t ne03,
+    const int64_t nc, const int64_t ne01,const int64_t ne02, const int64_t ne03,
+    const int64_t s01, const int64_t s02, const int64_t s03,
+    dpct::queue_ptr queue) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
+    // 現状ではconvert_unary_syclから呼び出されることしかないので、
+    // メモリ配列の長さのみ参照して連続領域に書き込む処理しかない。
+    // 今後まともな実装を行う必要が出てくる可能性はある。
+    GGML_ASSERT(queue);
     dpct::has_capability_or_fail(queue->get_device(), { sycl::aspect::fp16 });
 
-    sycl::range<3> global_size(ne02 * ne03, ne01, ceil_div(ne00, SYCL_DEQUANTIZE_BLOCK_SIZE));
+    GGML_UNUSED(ne01);
+    GGML_UNUSED(ne02);
+    GGML_UNUSED(ne03);
+    GGML_UNUSED(s01);
+    GGML_UNUSED(s02);
+    GGML_UNUSED(s03);
+    //GGML_SYCL_DEBUG("[SYCL] %s ne02_fdv(%u,%u,%u)\n", __func__, ne02_fdv[0], ne02_fdv[1], ne02_fdv[2]);
 
-    // decrease global range when it exceeds the max int
-    // TODO: Downsample logic is separated from the kernel, a rewrite is desirable
-    int64_t        downsized_workgroup = downsample_sycl_global_range(global_size[0], SYCL_DEQUANTIZE_BLOCK_SIZE);
-    sycl::range<3> workgroup_size(1, 1, downsized_workgroup);
+    const src_t * x = static_cast<const src_t *>(vx);
 
-    queue->parallel_for(sycl::nd_range<3>(global_size * workgroup_size, workgroup_size), [=](sycl::nd_item<3> item_ct1) {
-        convert_unary_nc<src_t>(vx, y, ne00, ne01, ne02, s01, s02, s03, item_ct1);
-    });
+    //GGML_SYCL_DEBUG("[SYCL] %s nc:%ld\n", __func__, nc);
+
+    int world = nc;
+    int local = SYCL_UNARY_WORK_GROUP_SIZE;
+    ggml_sycl_adjusted_looper(world, local, SYCL_UNARY_WORK_GROUP_NUM, queue,
+        [=](int adjusted_global, int adjusted_local, int offset){
+
+        queue->parallel_for(sycl::nd_range<1>(adjusted_global, adjusted_local),
+                    [=](sycl::nd_item<1> item_ct1)
+                    [[sycl::reqd_sub_group_size(SYCL_UNARY_SUB_GROUP_SIZE)]] {
+                        convert_unary_nc_one_offset<src_t>(
+                            (const src_t *)(x),
+                            (dst_t *)(y),
+                            offset,
+                            item_ct1
+                        );
+                    }
+        );
 }
-
-template <typename src_t, typename dst_t>
-static void convert_unary_sycl(const void * vx, dst_t * y, const int64_t k, dpct::queue_ptr queue) {
-    convert_unary_nc_sycl<src_t>(vx, y, k, 1, 1, 1, k, k, k, queue);
-}
-
 
 to_fp16_sycl_t ggml_get_to_fp16_sycl(ggml_type type, ggml_tensor * dst) {
     switch (type) {
