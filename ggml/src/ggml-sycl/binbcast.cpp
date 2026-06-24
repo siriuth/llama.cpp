@@ -5,6 +5,26 @@
 #include <sycl/sycl.hpp>
 
 #include "ggml.h"
+#include "siriuth.hpp"
+
+//#define SYCL_BCAST_WORK_GROUP_NUM 1
+//#define SYCL_BCAST_WORK_GROUP_NUM 64
+//#define SYCL_BCAST_WORK_GROUP_NUM 128
+#define SYCL_BCAST_WORK_GROUP_NUM 999999
+//#define SYCL_BCAST_WORK_GROUP_NUM 64
+//#define SYCL_BCAST_WORK_GROUP_NUM 16
+//#define SYCL_BCAST_WORK_GROUP_SIZE 16
+#define SYCL_BCAST_WORK_GROUP_SIZE 32
+//#define SYCL_BCAST_WORK_GROUP_SIZE 64
+//#define SYCL_BCAST_WORK_GROUP_SIZE 128
+//#define SYCL_BCAST_WORK_GROUP_SIZE 256
+//#define SYCL_BCAST_WORK_GROUP_SIZE 64
+//#define SYCL_BCAST_SUB_GROUP_SIZE 8
+#define SYCL_BCAST_SUB_GROUP_SIZE 16
+//#define SYCL_BCAST_SUB_GROUP_SIZE 32
+//#define SYCL_BCAST_SUB_GROUP_SIZE 64 // Sub-group size 64 is not supported on the deviceException
+
+#define SYCL_OTHER_WORK_GROUP_NUM 8
 
 template<float (*bin_op)(const float, const float), typename src0_t, typename src1_t, typename dst_t>
 static void k_bin_bcast(const src0_t * src0, const src1_t * src1, dst_t * dst,
@@ -48,27 +68,81 @@ static void k_bin_bcast(const src0_t * src0, const src1_t * src1, dst_t * dst,
     }
 }
 
+// ne2とne3をまとめた形で1個実行する。
 template<float (*bin_op)(const float, const float), typename src0_t, typename src1_t, typename dst_t>
-static void k_bin_bcast_unravel(const src0_t * src0, const src1_t * src1, dst_t * dst,
+static void k_bin_bcast_one(const src0_t * src0, const src1_t * src1, dst_t * dst,
         int ne0, int ne1, int ne2, int ne3,
         int ne10, int ne11, int ne12, int ne13,
-        /*int s0, */ int s1,  int s2,  int s3,
+        int s0,  int s1,  int s2,  int s3,
         int s00, int s01, int s02, int s03,
         int s10, int s11, int s12, int s13,
+        const sycl::range<3> offset,
         const sycl::nd_item<3> &item_ct1) {
+    const int i0 = item_ct1.get_global_id(2) + offset[2];
+    const int i1 = item_ct1.get_global_id(1) + offset[1];
+    const int i2 = (item_ct1.get_global_id(0) + offset[0]) / ne3;
+    const int i3 = (item_ct1.get_global_id(0) + offset[0]) % ne3;
 
-    const int i = item_ct1.get_local_range(2) * item_ct1.get_group(2) +
-                  item_ct1.get_local_id(2);
+    if (i0 >= ne0 || i1 >= ne1 || i2 >= ne2) {
+        return;
+    }
+    /*
+    const int i10 = i0 % ne10;
+    const int i11 = i1 % ne11;
+    const int i12 = i2 % ne12;
+    const int i13 = i3 % ne13;
+
+    const size_t i_src0 =  i3*s03 +  i2*s02 +  i1*s01 +  i0*s00;
+    const size_t i_src1 = i13*s13 + i12*s12 + i11*s11 + i10*s10;
+    const size_t i_dst  =  i3*s3  +  i2*s2  +  i1*s1  +  i0*s0;
+
+    const src0_t * src0_row = src0 + i_src0;
+    const src1_t * src1_row = src1 + i_src1;
+    dst_t * dst_row = dst + i_dst;
+    */
+    // 変数を排除して即値形式にしてみたが、コンパイラの最適化で速度は変わらない感じ。
+    // 可読性が失われるので、元の形のソースを生かしておく。
+    const src0_t * src0_row = src0 + i3*s03 +  i2*s02 +  i1*s01 +  i0*s00;
+    const src1_t * src1_row = src1 + (i3 % ne13)*s13 + (i2 % ne12)*s12 + (i1 % ne11)*s11 + (i0 % ne10)*s10;
+    dst_t * dst_row = dst + i3*s3  +  i2*s2  +  i1*s1  +  i0*s0;
+
+    //dst_row[0] = (dst_t)bin_op(src0 ? (float)src0_row[0] : 0.0f, (float)src1_row[0]);
+    *(dst_row) = (dst_t)bin_op(src0 ? (float)*(src0_row) : 0.0f, (float)*(src1_row));
+}
+
+template<float (*bin_op)(const float, const float), typename src0_t, typename src1_t, typename dst_t>
+static void k_bin_bcast_unravel(
+        const src0_t * src0,
+        const src1_t * src1,
+        dst_t * dst,
+        int ne0, int ne1, int ne2, int ne3,
+        int ne10, int ne11, int ne12, int ne13,
+        /*int s0,*/ int s1,  int s2,  int s3,
+        int s00, int s01, int s02, int s03,
+        int s10, int s11, int s12, int s13,
+        int k,
+        int offset,
+        const sycl::nd_item<1> &item_ct1) {
+
+    //const int i = item_ct1.get_local_range(0) * item_ct1.get_group(0) +
+    //              item_ct1.get_local_id(0) + offset;
+    const int i = item_ct1.get_global_id(0) + offset;
+
+    if (i >= k) {
+        return;
+    }
 
     const int i3 = i/(ne2*ne1*ne0);
     const int i2 = (i/(ne1*ne0)) % ne2;
     const int i1 = (i/ne0) % ne1;
     const int i0 = i % ne0;
 
-    if (i0 >= ne0 || i1 >= ne1 || i2 >= ne2 || i3 >= ne3) {
+    //if (i0 >= ne0 || i1 >= ne1 || i2 >= ne2 || i3 >= ne3) {
+    if (i3 >= ne3) {
         return;
     }
 
+    const int i10 = i0 % ne10;
     const int i11 = i1 % ne11;
     const int i12 = i2 % ne12;
     const int i13 = i3 % ne13;
@@ -81,22 +155,70 @@ static void k_bin_bcast_unravel(const src0_t * src0, const src1_t * src1, dst_t 
     const src1_t * src1_row = src1 + i_src1;
     dst_t * dst_row = dst + i_dst;
 
-    const int i10 = i0 % ne10;
     dst_row[i0] = (dst_t)bin_op(src0 ? (float)src0_row[i0*s00] : 0.0f, (float)src1_row[i10*s10]);
 }
 
+/*
+template<float (*bin_op)(const float, const float), typename src0_t, typename src1_t, typename dst_t>
+static void k_bin_bcast_src1_unravel(
+        const src0_t * src0,
+        const src1_t * src1,
+        dst_t * dst,
+        int ne0, int ne1, int ne2, int ne3,
+        int ne10, int ne11, int ne12, int ne13,
+        //int s0,
+        int s1,  int s2,  int s3,
+        int s10, int s11, int s12, int s13,
+        int k,
+        int offset,
+        const sycl::nd_item<1> &item_ct1) {
+    const int i = item_ct1.get_global_id(0) + offset;
+
+    if (i >= k) {
+        return;
+    }
+
+    const int i3 = i/(ne2*ne1*ne0);
+    const int i2 = (i/(ne1*ne0)) % ne2;
+    const int i1 = (i/ne0) % ne1;
+    const int i0 = i % ne0;
+
+    if (i3 >= ne3) {
+        return;
+    }
+
+    const int i10 = i0 % ne10;
+    const int i11 = i1 % ne11;
+    const int i12 = i2 % ne12;
+    const int i13 = i3 % ne13;
+
+    const size_t i_src1 = i13*s13 + i12*s12 + i11*s11;
+    const size_t i_dst  =  i3*s3  +  i2*s2  +  i1*s1;
+
+    const src1_t * src1_row = src1 + i_src1;
+    dst_t * dst_row = dst + i_dst;
+
+    dst_row[i0] = (dst_t)bin_op(0.0f, (float)src1_row[i10*s10]);
+
+    GGML_UNUSED(src0);
+}
+*/
 
 template<float (*bin_op)(const float, const float)>
 struct bin_bcast_sycl {
     template <typename src0_t, typename src1_t, typename dst_t>
-    void operator()(const src0_t * src0_dd, const src1_t * src1_dd, dst_t * dst_dd, const int64_t ne00,
-                    const int64_t ne01, const int64_t ne02, const int64_t ne03, const int64_t ne10, const int64_t ne11,
-                    const int64_t ne12, const int64_t ne13, const int64_t ne0, const int64_t ne1, const int64_t ne2,
-                    const int64_t ne3, const size_t nb00, const size_t nb01, const size_t nb02, const size_t nb03,
-                    const size_t nb10, const size_t nb11, const size_t nb12, const size_t nb13, const size_t nb0,
-                    const size_t nb1, const size_t nb2, const size_t nb3, const bool src0_is_contiguous,
-                    const bool src1_is_contiguous, const bool src0_is_permuted, const bool src1_is_permuted,
-                    queue_ptr stream) {
+    void operator()(
+            const src0_t * src0_dd, const src1_t * src1_dd, dst_t * dst_dd,
+            const int64_t ne00, const int64_t ne01, const int64_t ne02, const int64_t ne03,
+            const int64_t ne10, const int64_t ne11, const int64_t ne12, const int64_t ne13,
+            const int64_t ne0,  const int64_t ne1,  const int64_t ne2,  const int64_t ne3,
+            const size_t nb00, const size_t nb01, const size_t nb02, const size_t nb03,
+            const size_t nb10, const size_t nb11, const size_t nb12, const size_t nb13,
+            const size_t nb0,  const size_t nb1,  const size_t nb2,  const size_t nb3,
+            const bool src0_is_contiguous, const bool src1_is_contiguous,
+            const bool src0_is_permuted, const bool src1_is_permuted,
+            queue_ptr stream) {
+
         int nr0 = ne10 / ne0;
         int nr1 = ne11/ne1;
         int nr2 = ne12/ne2;
@@ -105,10 +227,10 @@ struct bin_bcast_sycl {
         int nr[4] = { nr0, nr1, nr2, nr3 };
 
         // collapse dimensions until first broadcast dimension
-        int64_t cne[] = {ne0, ne1, ne2, ne3};
+        int64_t cne[]  = {ne0, ne1, ne2, ne3};
         int64_t cne0[] = {ne00, ne01, ne02, ne03};
         int64_t cne1[] = {ne10, ne11, ne12, ne13};
-        size_t cnb[] = {nb0, nb1, nb2, nb3};
+        size_t cnb[]  = {nb0, nb1, nb2, nb3};
         size_t cnb0[] = {nb00, nb01, nb02, nb03};
         size_t cnb1[] = {nb10, nb11, nb12, nb13};
         auto collapse = [](int64_t cne[]) {
@@ -165,7 +287,7 @@ struct bin_bcast_sycl {
             size_t nb12 = cnb1[2];
             size_t nb13 = cnb1[3];
 
-            // size_t s0 = nb0 / sizeof(dst_t);
+            size_t s0 = nb0 / sizeof(dst_t);
             size_t s1 = nb1 / sizeof(dst_t);
             size_t s2 = nb2 / sizeof(dst_t);
             size_t s3 = nb3 / sizeof(dst_t);
@@ -197,6 +319,7 @@ struct bin_bcast_sycl {
             GGML_ASSERT(nb12 % sizeof(src1_t) == 0);
             GGML_ASSERT(nb13 % sizeof(src1_t) == 0);
 
+/*
             const int block_size = 128;
 
             int64_t hne0 = std::max(ne0/2LL, 1LL);
@@ -206,53 +329,57 @@ struct bin_bcast_sycl {
             block_dims[1] = std::min<unsigned int>(
                 ne1, block_size / (unsigned int)block_dims[2]);
             block_dims[0] = std::min(
-                std::min<unsigned int>(
-                    ne2 * ne3, block_size / (unsigned int)block_dims[2] /
-                                   (unsigned int)block_dims[1]),
-                64U);
+            std::min<unsigned int>(ne2 * ne3, block_size / (unsigned int)block_dims[2] / (unsigned int)block_dims[1]), 64U);
 
             sycl::range<3> block_nums(
                 (ne2 * ne3 + block_dims[0] - 1) / block_dims[0],
                 (ne1 + block_dims[1] - 1) / block_dims[1],
                 (hne0 + block_dims[2] - 1) / block_dims[2]);
 
-            if (block_nums[0] > 65535) {
-                // this is the maximum number of blocks in z direction, fallback to 1D grid kernel
-                int block_num = (ne0*ne1*ne2*ne3 + block_size - 1) / block_size;
-                {
-                    dpct::has_capability_or_fail(stream->get_device(),
-                                                 {sycl::aspect::fp16});
+            sycl::device dev = stream->get_device();
+            const int64_t max_work_group_size = dev.get_info<sycl::info::device::max_work_group_size>();
+            GGML_SYCL_DEBUG("[SYCL] %s max_work_group_size:%ld\n", __func__, max_work_group_size);
+
+                    // 旧ロジック
+                    stream->parallel_for(
+                        sycl::nd_range<3>(block_nums * block_dims, block_dims),
+                        [=](sycl::nd_item<3> item_ct1) {
+                            k_bin_bcast<bin_op>(
+                                src0_dd, src1_dd, dst_dd,
+                                ne0, ne1, ne2, ne3,
+                                ne10, ne11, ne12, ne13,
+                                s1, s2, s3,
+                                s00, s01, s02, s03,
+                                s10, s11, s12, s13,
+                                item_ct1);
+                    });
+
+*/
+
+            sycl::range<3> world(ne3*ne2, ne1, ne0);
+            sycl::range<3> local(1, 1, SYCL_BCAST_WORK_GROUP_SIZE);
+            ggml_sycl_looper(world, local, SYCL_BCAST_WORK_GROUP_NUM, stream,
+                [=](sycl::range<3> global, sycl::range<3> offset){
 
                     stream->parallel_for(
-                        sycl::nd_range<3>(sycl::range<3>(1, 1, block_num) *
-                                              sycl::range<3>(1, 1, block_size),
-                                          sycl::range<3>(1, 1, block_size)),
-                        [=](sycl::nd_item<3> item_ct1) {
-                            k_bin_bcast_unravel<bin_op>(
-                                src0_dd, src1_dd, dst_dd, ne0, ne1, ne2, ne3,
-                                ne10, ne11, ne12, ne13, s1, s2, s3, s00, s01, s02,
-                                s03, s10, s11, s12, s13, item_ct1);
-                        });
+                        sycl::nd_range<3>(global, local),
+                        [=](sycl::nd_item<3> item_ct1)
+                        [[sycl::reqd_sub_group_size(SYCL_BCAST_SUB_GROUP_SIZE)]]
+                        {
+                            k_bin_bcast_one<bin_op>(
+                                src0_dd, src1_dd, dst_dd,
+                                ne0, ne1, ne2, ne3,
+                                ne10, ne11, ne12, ne13,
+                                s0, s1, s2, s3,
+                                s00, s01, s02, s03,
+                                s10, s11, s12, s13,
+                                offset,
+                                item_ct1);
+                        }
+                    );
                 }
-            } else {
-                /*
-                DPCT1049:16: The work-group size passed to the SYCL kernel may
-                exceed the limit. To get the device limit, query
-                info::device::max_work_group_size. Adjust the work-group size if
-                needed.
-                */
-                dpct::has_capability_or_fail(stream->get_device(),
-                                             {sycl::aspect::fp16});
+            );
 
-                stream->parallel_for(
-                    sycl::nd_range<3>(block_nums * block_dims, block_dims),
-                    [=](sycl::nd_item<3> item_ct1) {
-                        k_bin_bcast<bin_op>(src0_dd, src1_dd, dst_dd, ne0, ne1,
-                                            ne2, ne3, ne10, ne11, ne12, ne13,
-                                            s1, s2, s3, s00, s01, s02, s03, s10, s11, s12, s13,
-                                            item_ct1);
-                    });
-            }
         }
     }
 };
