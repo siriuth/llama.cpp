@@ -78,6 +78,18 @@
 #define MEM_SIZE_2M	0x00200000
 #define MEM_SIZE_1G	0x40000000
 
+//#define SYCL_SCALE_WORK_GROUP_NUM 1
+//#define SYCL_SCALE_WORK_GROUP_NUM 256
+//#define SYCL_SCALE_WORK_GROUP_NUM 512
+#define SYCL_SCALE_WORK_GROUP_NUM 999999 // 大きいサイズでシステムの最大値を取る。すべてこれでいいような気がするが、個別に設定できることでいいことがあるかもしれない。
+                                         // 理屈としては、この制限に引っかかると、GPUに分割して投げるので、オーバーへっとがかかってくるようになる。
+#define SYCL_SCALE_WORK_GROUP_SIZE 128 // best
+//#define SYCL_SCALE_WORK_GROUP_SIZE 256
+//#define SYCL_SCALE_WORK_GROUP_SIZE 512
+//#define SYCL_SCALE_SUB_GROUP_SIZE 8
+//#define SYCL_SCALE_SUB_GROUP_SIZE 16
+#define SYCL_SCALE_SUB_GROUP_SIZE 32 // best
+
 static bool g_sycl_loaded = false;
 int g_ggml_sycl_debug = 0;
 int g_ggml_sycl_disable_optimize = 0;
