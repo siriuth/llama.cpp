@@ -826,6 +826,25 @@ static void convert_unary_nc_sycl(const void * __restrict__ vx, dst_t * __restri
         );
 }
 
+template <typename src_t, typename dst_t>
+static void convert_unary_sycl(const void * vx, dst_t * y, const int64_t k, dpct::queue_ptr queue) {
+    //GGML_SYCL_DEBUG("[SYCL] %s k:%ld\n", __func__, k);
+    //int64_t local_x = MIN(k, SYCL_UNARRAY_BLOCK_SIZE);
+    //int64_t global_x = k;
+    //int64_t global_x = MIN(k, SYCL_UNARRAY_BLOCK_SIZE); // この値使われていないけど意味合い間違ってるｗ
+    //const sycl::device dev = queue->get_device();
+    //const int32_t max_compute_units = dev.get_info<sycl::info::device::max_compute_units>();
+    //const size_t max_work_group_size = dev.get_info<sycl::info::device::max_work_group_size>();
+    //GGML_SYCL_DEBUG("[SYCL] %s max_compute_units:%d max_work_group_size:%zu)\n", __func__, max_compute_units, max_work_group_size);
+
+    //GGML_SYCL_DEBUG("[SYCL] %s local x:%ld\n", __func__, local_x);
+    //GGML_SYCL_DEBUG("[SYCL] %s global x:%ld\n", __func__, global_x);
+
+    //convert_unary_nc_sycl<src_t>(vx, y, k, local_x, 1, 1, global_x, max_compute_units, max_work_group_size, queue);
+    convert_unary_nc_sycl<src_t>(vx, y, k, 1, 1, 1, 1, 1, 1, queue);
+    //convert_unary_nc_sycl<src_t>(vx, y, k, local_x, global_x, queue);
+}
+
 to_fp16_sycl_t ggml_get_to_fp16_sycl(ggml_type type, ggml_tensor * dst) {
     switch (type) {
         case GGML_TYPE_Q1_0:
