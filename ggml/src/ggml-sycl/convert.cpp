@@ -27,7 +27,6 @@
 template <int qk, int qr, dequantize_kernel_t dequantize_kernel, typename dst_t>
 static void dequantize_block(const void * __restrict__ vx, dst_t * __restrict__ y, const int64_t k,
                              const sycl::nd_item<3> &item_ct1) {
-    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
     const int64_t i = 2 * (item_ct1.get_local_range(2) * item_ct1.get_group(2) +
                        item_ct1.get_local_id(2));
 
