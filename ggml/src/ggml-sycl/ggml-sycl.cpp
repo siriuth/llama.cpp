@@ -2010,7 +2010,7 @@ static void diag_mask_inf_f32(const float * x, float * dst, const int ncols, con
     dst[i] = x[i] - (col > n_past + row % rows_per_channel) * FLT_MAX;
 }
 
-tatic void scale_f32_one(const float * x, float * dst, const float scale, const float bias,
+static void scale_f32_one(const float * x, float * dst, const float scale, const float bias,
                       const int k,
                       const int offset,
                       const sycl::nd_item<1> &item_ct1) {
