@@ -1003,6 +1003,56 @@ static void dequantize_block_q4_K(const void * __restrict__ vx, dst_t * __restri
 #endif
 }
 
+template<typename dst_t>
+static void dequantize_block_q4_K_offset(const void * __restrict__ vx, dst_t * __restrict__ yy,
+                                  uint8_t* scales_local,
+    const int group_offset,
+    const int offset,
+    const sycl::nd_item<1> &item_ct1) {
+    const block_q4_K * x = (const block_q4_K *) vx;
+
+//    int64_t i = item_ct1.get_group(0) + group_offset;
+//
+//    size_t id = item_ct1.get_local_id(0) + offset;
+//    if(id > item_ct1.get_local_range(0)){
+//        id -= item_ct1.get_local_range(0);
+//        i ++;
+//    }
+
+    const int64_t id = item_ct1.get_global_id(0) + offset;
+    const int64_t i = id / 32;
+    const int64_t tid = id - i * 32;
+
+#if QK_K == 256
+    //const int64_t tid = item_ct1.get_local_id(0) + offset;
+    //const int64_t tid = id;
+    const int64_t il  = tid / 8;
+    const int64_t ir  = tid % 8;
+
+    dst_t * y = yy + i * QK_K + 64 * il + 4 * ir;
+
+    const sycl::half2 dm = x[i].dm;
+    const float dall = dm[0];
+    const float dmin = dm[1];
+
+    if (tid < 12) {
+        scales_local[tid] = x[i].scales[tid];
+    }
+
+    item_ct1.barrier(sycl::access::fence_space::local_space);
+    dequantize_q4_K_common(y, x[i].qs, dall, dmin, scales_local, il, ir);
+#else
+    //const int64_t tid = item_ct1.get_local_id(0) + offset;
+    //const int64_t tid = id;
+    const uint8_t * q = x[i].qs;
+    dst_t * y = yy + i*QK_K;
+    const float d = (float)x[i].dm[0];
+    const float m = (float)x[i].dm[1];
+    y[tid+ 0] = d * (x[i].scales[0] & 0xF) * (q[tid] & 0xF) - m * (x[i].scales[0] >> 4);
+    y[tid+32] = d * (x[i].scales[1] & 0xF) * (q[tid] >>  4) - m * (x[i].scales[1] >> 4);
+#endif
+}
+
 template <typename dst_t>
 static void dequantize_block_q4_K_reorder(const void * __restrict__ vx, dst_t * __restrict__ yy, uint8_t * scales_local,
                                           const sycl::nd_item<1> & item_ct1, int64_t nb) {
