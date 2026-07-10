@@ -258,11 +258,27 @@ static void k_bin_bcast_src1_unravel(
 }
 */
 
+// 要素数が多いもの順で並べる
 void sortDim(int* d, const int64_t ne[4]){
     //int d[4] = {0, 1, 2, 3}
     for(int i = 0; i < (4 - 1); i++){
         for(int j = i+1; j < 4; j++){
             if(ne[d[i]] < ne[d[j]]){
+                std::swap(d[i], d[j]);
+            }
+        }
+    }
+    //return d;
+}
+
+// データ間隔
+// 要素数が１以外でデータの間隔が短いもの
+// 要素数が1のものは問答無用で後ろへ
+void sortDim(int* d, const int64_t ne[4], const int64_t nb[4]){
+    //int d[4] = {0, 1, 2, 3}
+    for(int i = 0; i < (4 - 1); i++){
+        for(int j = i+1; j < 4; j++){
+            if((ne[d[i]] == 1 && ne[d[j]] != 1) || (nb[d[i]] > nb[d[j]])){
                 std::swap(d[i], d[j]);
             }
         }
@@ -425,7 +441,9 @@ struct bin_bcast_sycl {
 */
             int sd[4] = {0, 1, 2, 3};
             const int64_t tne[4] = {ne0, ne1, ne2, ne3};
-            sortDim(sd, tne);
+            const int64_t tnb[4] = {nb0, nb1, nb2, nb3};
+            //sortDim(sd, tne);
+            sortDim(sd, tne, tnb);
 
             GGML_SYCL_DEBUG("[SYCL] %s k_bin_bcast_one ne(%ld, %ld, %ld, %ld) sd(%d, %d, %d, %d)\n", __func__, ne0, ne1, ne2, ne3, sd[0], sd[1], sd[2], sd[3]);
 
