@@ -158,3 +158,47 @@ void SyclQueueEventWatcher::WaitForSubmit()
         }
 */
 }
+
+// 要素数が多いもの順で並べる
+void sortDim(int* d, const int64_t ne[4]){
+    //int d[4] = {0, 1, 2, 3}
+    for(int i = 0; i < (4 - 1); i++){
+        for(int j = i+1; j < 4; j++){
+            if(ne[d[i]] < ne[d[j]]){
+                std::swap(d[i], d[j]);
+            }
+        }
+    }
+    //return d;
+}
+
+// データ間隔
+// 要素数が１以外でデータの間隔が短いもの
+// 要素数が1のものは問答無用で後ろへ
+void sortDim(int* d, const int64_t ne[4], const int64_t nb[4]){
+    //int d[4] = {0, 1, 2, 3}
+    for(int i = 0; i < (4 - 1); i++){
+        for(int j = i+1; j < 4; j++){
+            if((ne[d[i]] == 1 && ne[d[j]] != 1) || (nb[d[i]] > nb[d[j]])){
+                std::swap(d[i], d[j]);
+            }
+        }
+    }
+    //return d;
+}
+
+// worldからglobalとlocalを調整する。
+void adjustment_local(sycl::range<3> &local, const sycl::range<3> world,
+    const int group_size, const int sub_group_size){
+    GGML_SYCL_DEBUG("[SYCL] %s world(%zu, %zu, %zu) group:%d sub:%d\n", __func__, world[0], world[1], world[2], group_size, sub_group_size);
+    GGML_SYCL_DEBUG("[SYCL] %s sizeof:%zu extend:%zu\n", __func__, sizeof(world), std::extent<decltype(world)>::value);
+    int max_idx = 0;
+    //for(int i = 1; i < sizeof(world); i++){
+    for(int i = 1; i < 3; i++){
+        if(world[max_idx] < world[i])max_idx=i;
+    }
+    GGML_SYCL_DEBUG("[SYCL] %s max_idx:%d\n", __func__, max_idx);
+    //for(int i=0; i < sizeof(local); i++)local[i]=(i==max_idx?group_size:1);
+    for(int i=0; i < 3; i++)local[i]=(i==max_idx?group_size:1);
+    GGML_SYCL_DEBUG("[SYCL] %s local(%zu, %zu, %zu)\n", __func__, local[0], local[1], local[2]);
+}
