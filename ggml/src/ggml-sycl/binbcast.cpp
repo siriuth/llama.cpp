@@ -258,36 +258,6 @@ static void k_bin_bcast_src1_unravel(
 }
 */
 
-// 要素数が多いもの順で並べる
-void sortDim(int* d, const int64_t ne[4]){
-    //int d[4] = {0, 1, 2, 3}
-    for(int i = 0; i < (4 - 1); i++){
-        for(int j = i+1; j < 4; j++){
-            if(ne[d[i]] < ne[d[j]]){
-                std::swap(d[i], d[j]);
-            }
-        }
-    }
-    //return d;
-}
-
-// データ間隔
-// 要素数が１以外でデータの間隔が短いもの
-// 要素数が1のものは問答無用で後ろへ
-void sortDim(int* d, const int64_t ne[4], const int64_t nb[4]){
-    //int d[4] = {0, 1, 2, 3}
-    for(int i = 0; i < (4 - 1); i++){
-        for(int j = i+1; j < 4; j++){
-            if((ne[d[i]] == 1 && ne[d[j]] != 1) || (nb[d[i]] > nb[d[j]])){
-                std::swap(d[i], d[j]);
-            }
-        }
-    }
-    //return d;
-}
-
-
-
 template<float (*bin_op)(const float, const float)>
 struct bin_bcast_sycl {
     template <typename src0_t, typename src1_t, typename dst_t>
@@ -528,7 +498,9 @@ struct bin_bcast_sycl {
 
 
             sycl::range<3> world(ane[3]*ane[2], ane[1], ane[0]);
-            sycl::range<3> local(1, 1, SYCL_BCAST_WORK_GROUP_SIZE);
+            //sycl::range<3> local(1, 1, SYCL_BCAST_WORK_GROUP_SIZE);
+            sycl::range<3> local;
+            adjustment_local(local, world, SYCL_BCAST_WORK_GROUP_SIZE, SYCL_BCAST_SUB_GROUP_SIZE);
             ggml_sycl_looper(world, local, SYCL_BCAST_WORK_GROUP_NUM, stream,
                 [=](sycl::range<3> global, sycl::range<3> offset){
 
