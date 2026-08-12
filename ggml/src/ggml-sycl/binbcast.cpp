@@ -411,9 +411,9 @@ struct bin_bcast_sycl {
 */
             int sd[4] = {0, 1, 2, 3};
             const int64_t tne[4] = {ne0, ne1, ne2, ne3};
-            const int64_t tnb[4] = {nb0, nb1, nb2, nb3};
-            //sortDim(sd, tne);
-            sortDim(sd, tne, tnb);
+            const size_t tnb[4] = {nb0, nb1, nb2, nb3};
+            //ggml_sortDim(sd, tne);
+            ggml_sortDim(sd, tne, tnb);
 
             GGML_SYCL_DEBUG("[SYCL] %s k_bin_bcast_one ne(%ld, %ld, %ld, %ld) sd(%d, %d, %d, %d)\n", __func__, ne0, ne1, ne2, ne3, sd[0], sd[1], sd[2], sd[3]);
 
