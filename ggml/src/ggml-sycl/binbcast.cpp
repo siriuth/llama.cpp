@@ -505,29 +505,29 @@ struct bin_bcast_sycl {
                 [=](sycl::range<3> global, sycl::range<3> offset){
 
                     auto e =
-                    stream->parallel_for(
-                        sycl::nd_range<3>(global, local),
-                        [=](sycl::nd_item<3> item_ct1)
-                        [[sycl::reqd_sub_group_size(SYCL_BCAST_SUB_GROUP_SIZE)]]
-                        {
-                            k_bin_bcast_one_sd<bin_op>(
-                                src0_dd, src1_dd, dst_dd,
-                                ane,
-                                ane1,
-                                as,
-                                as0,
-                                as1,
-                                offset,
-                                item_ct1);
-                        }
-                    );
+                        stream->parallel_for(
+                            sycl::nd_range<3>(global, local),
+                            [=](sycl::nd_item<3> item_ct1)
+                            [[sycl::reqd_sub_group_size(SYCL_BCAST_SUB_GROUP_SIZE)]]
+                            {
+                                k_bin_bcast_one_sd<bin_op>(
+                                    src0_dd, src1_dd, dst_dd,
+                                    ane,
+                                    ane1,
+                                    as,
+                                    as0,
+                                    as1,
+                                    offset,
+                                    item_ct1);
+                            }
+                                );
                     SyclQueueEventWatcher::getInstance().SetEvent(e);
                 }
             );
 
 
 
-//            }
+            //            }
 
         }
     }
