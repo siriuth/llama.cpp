@@ -2,6 +2,7 @@
 #include "ggml-sycl/presets.hpp"
 #include "ggml.h"
 #include "element_wise.hpp"
+#include "siriuth.hpp"
 
 #define SYCL_GLOBAL_ID_LOOP(K, ITEM) \
     for (auto i = ITEM.get_global_id(0); i < (size_t)K; i += ITEM.get_global_range(0))
@@ -318,18 +319,24 @@ static void unary_op_generic_kernel(
         const T * x,
         T * dst,
         const int k,
+        //const int64_t ne0, const int64_t ne1, const int64_t ne2, const int64_t ne3,
         const sycl::uint3 ne0_fd, const sycl::uint3 ne1_fd, const sycl::uint3 ne2_fd,
         const size_t nb0,  const size_t nb1,  const size_t nb2,  const size_t nb3,
         const size_t nbd0, const size_t nbd1, const size_t nbd2, const size_t nbd3,
         const sycl::nd_item<1> & item_ct1,
         F func) {
 
+    //(void) ne3;
     // 32-bit index math: k is int, so every logical index fits u32. 64-bit integer div/mod is
     // emulated on Xe and dominates this kernel otherwise, and even the 32-bit divide is worth
     // avoiding -- the divisors are launch-invariant, so the magic numbers are precomputed
     // host-side and each division becomes a multiply-high plus a shift.
     // Byte offsets are widened back to size_t only for the final address math.
     SYCL_GLOBAL_ID_LOOP(k, item_ct1) {
+        //const int64_t i0 =  i % ne0;
+        //const int64_t i1 = (i / ne0)        % ne1;
+        //const int64_t i2 = (i / (ne0*ne1))  % ne2;
+        //const int64_t i3 =  i / (ne0*ne1*ne2);
         sycl::uint2 dm = fast_div_modulo((uint32_t) i, ne0_fd);
         const uint32_t i0 = dm.y();
         dm = fast_div_modulo(dm.x(), ne1_fd);
@@ -341,6 +348,8 @@ static void unary_op_generic_kernel(
         const char * src_base = (const char *) x;
         char       * dst_base = (char *) dst;
 
+        //const T * srcp = (const T *)(src_base + i0*nb0  + i1*nb1  + i2*nb2  + i3*nb3 );
+        //T *       dstp = (T *)(dst_base + i0*nbd0 + i1*nbd1 + i2*nbd2 + i3*nbd3);
         const T * srcp = (const T *)(src_base + (size_t) i0*nb0  + (size_t) i1*nb1  + (size_t) i2*nb2  + (size_t) i3*nb3 );
         T *       dstp = (T *)(dst_base + (size_t) i0*nbd0 + (size_t) i1*nbd1 + (size_t) i2*nbd2 + (size_t) i3*nbd3);
 
@@ -420,6 +429,120 @@ static void clamp(const T * x, T * dst, const float min, const float max, const 
     }
 }
 
+template<typename T>
+static void gated_op_fused_geglu(const T * x, const T * g, T * dst, const uint64_t k, const uint64_t n, const uint64_t o0, const uint64_t o1, const sycl::nd_item<1> &item_ct1) {
+    SYCL_GLOBAL_ID_LOOP(k, item_ct1) {
+        const int64_t j0 = (i / n) * o0 + (i % n);
+        const int64_t j1 = o0 == o1 ? j0 : (i / n) * o1 + (i % n);
+        dst[i] = op_gelu(x[j0]) * g[j1];
+    }
+}
+
+template<typename T>
+static void gated_op_fused_reglu(const T * x, const T * g, T * dst, const uint64_t k, const uint64_t n, const uint64_t o0, const uint64_t o1, const sycl::nd_item<1> &item_ct1) {
+    SYCL_GLOBAL_ID_LOOP(k, item_ct1) {
+        const int64_t j0 = (i / n) * o0 + (i % n);
+        const int64_t j1 = o0 == o1 ? j0 : (i / n) * o1 + (i % n);
+        dst[i] = op_relu(x[j0]) * g[j1];
+    }
+}
+
+template<typename T>
+static void gated_op_fused_swiglu(const T * x, const T * g, T * dst, const uint64_t k, const uint64_t n, const uint64_t o0, const uint64_t o1, const sycl::nd_item<1> &item_ct1) {
+    SYCL_GLOBAL_ID_LOOP(k, item_ct1)  {
+        const int64_t j0 = (i / n) * o0 + (i % n);
+        const int64_t j1 = o0 == o1 ? j0 : (i / n) * o1 + (i % n);
+        dst[i] = op_silu(x[j0]) * g[j1];
+    }
+}
+
+template<typename T>
+static void gated_op_fused_swiglu_one(const T * x, const T * g, T * dst, const size_t k, const size_t n, const size_t o0, const size_t o1,
+    const int64_t  ne[GGML_MAX_DIMS],
+    const size_t  ns[GGML_MAX_DIMS],
+    const size_t  s0[GGML_MAX_DIMS],
+    const size_t  s1[GGML_MAX_DIMS],
+    const sycl::range<3> offset,
+    const size_t dims,
+    const sycl::nd_item<3> &item_ct1)
+{
+    //const size_t i = item_ct1.get_global_id(0);
+    const int64_t i0 = item_ct1.get_global_id(2) + offset[2];
+    const int64_t i1 = item_ct1.get_global_id(1) + offset[1];
+    const int64_t i2 = dims<4?item_ct1.get_global_id(0) + offset[0]:(item_ct1.get_global_id(0) + offset[0]) / ne[3];
+    const int64_t i3 = dims<4?0:(item_ct1.get_global_id(0) + offset[0]) % ne[3];
+
+    //if(i > k) return;
+    if (i0 >= ne[0] || i1 >= ne[1] || i2 >= ne[2]) {
+        return;
+    }
+
+    //const size_t j0 = (i / n) * o0 + (i % n);
+    //const size_t j1 = o0 == o1 ? j0 : (i / n) * o1 + (i % n);
+
+    //const src0_t * src0_row = src0 + i3*s0[3] +  i2*s0[2] +  i1*s0[1] +  i0*s0[0];
+    //const src1_t * src1_row = src1 + (i3 % ne1[3])*s1[3] + (i2 % ne1[2])*s1[2] + (i1 % ne1[1])*s1[1] + (i0 % ne1[0])*s1[0];
+    //dst_t * dst_row = dst + i3*nb[3]  +  i2*nb[2]  +  i1*nb[1]  +  i0*nb[0];
+
+    // indexの計算
+    //const size_t i = i0 + i1*nb[0] + i2*nb[1] + i3*nb[2];
+    const size_t i = i0 + i1*ne[0] + i2*ne[0]*ne[1] + (dims<4?0:i3*ne[0]*ne[1]*ne[2]);
+    //const size_t j0 = (i / n) * o0 + (i % n);
+    //const size_t j1 = o0 == o1 ? j0 : (i / n) * o1 + (i % n);
+    const size_t j0 = i0*s0[0] + i1*s0[1] + i2*s0[2] + (dims<4?0:i3*s0[3]);
+    const size_t j1 = o0 == o1 ? j0 : i0*s1[0] + i1*s1[1] + i2*s1[2] + (dims<3?0:i3*s1[3]);
+
+    dst[i] = op_silu(x[j0]) * g[j1];
+    //dst[i] = op_silu(x[i]) * g[i];
+}
+
+// 3次元以下の場合は演算を減らす。
+template<typename T>
+static void gated_op_fused_swiglu_one_u3d(const T * x, const T * g, T * dst, const size_t k, const size_t n, const size_t o0, const size_t o1,
+    const int64_t  ne[GGML_MAX_DIMS],
+    const size_t  ns[GGML_MAX_DIMS],
+    const size_t  ns0[GGML_MAX_DIMS],
+    const size_t  ns1[GGML_MAX_DIMS],
+    const sycl::range<3> offset,
+    const size_t dims,
+    const sycl::nd_item<3> &item_ct1)
+{
+    //const size_t i = item_ct1.get_global_id(0);
+    const int64_t i0 = item_ct1.get_global_id(2) + offset[2];
+    const int64_t i1 = item_ct1.get_global_id(1) + offset[1];
+    const int64_t i2 = item_ct1.get_global_id(0) + offset[0];
+
+    //if(i > k) return;
+    if (i0 >= ne[0] || i1 >= ne[1] || i2 >= ne[2]) {
+        return;
+    }
+
+    //const size_t i = i0 + i1*ne[0] + i2*ne[0]*ne[1];
+    const size_t i = i0*ns[0] + i1*ns[1] + i2*ns[2];
+    const size_t j0 = i0*ns0[0] + i1*ns0[1] + i2*ns0[2];
+    const size_t j1 = o0 == o1 ? j0 : i0*ns1[0] + i1*ns1[1] + i2*ns1[2];
+
+    dst[i] = op_silu(x[j0]) * g[j1];
+}
+
+template<typename T>
+static void gated_op_fused_geglu_erf(const T * x, const T * g, T * dst, const uint64_t k, const uint64_t n, const uint64_t o0, const uint64_t o1, const sycl::nd_item<1> &item_ct1) {
+    SYCL_GLOBAL_ID_LOOP(k, item_ct1) {
+        const int64_t j0 = (i / n) * o0 + (i % n);
+        const int64_t j1 = o0 == o1 ? j0 : (i / n) * o1 + (i % n);
+        dst[i] = op_gelu_erf(x[j0]) * g[j1];
+    }
+}
+
+template<typename T>
+static void gated_op_fused_geglu_quick(const T * x, const T * g, T * dst, const uint64_t k, const uint64_t n, const uint64_t o0, const uint64_t o1, const sycl::nd_item<1> &item_ct1) {
+    SYCL_GLOBAL_ID_LOOP(k, item_ct1) {
+        const int64_t j0 = (i / n) * o0 + (i % n);
+        const int64_t j1 = o0 == o1 ? j0 : (i / n) * o1 + (i % n);
+        dst[i] = op_gelu_quick(x[j0]) * g[j1];
+    }
+}
+
 template<typename T, typename F>
 static void unary_gated_op_flat_kernel(const T * x, const T * g, T * dst, const uint64_t k, const sycl::nd_item<1> & item_ct1, F func) {
     SYCL_GLOBAL_ID_LOOP(k, item_ct1) {
@@ -457,6 +580,7 @@ static void acc_f32_sycl(const char *x, const char *y, float *dst,
                          const int64_t nb10, const int64_t nb11, const int64_t nb12, const int64_t nb13,
                          const int64_t s1, const int64_t s2, const int64_t s3,
                          const int64_t offset, queue_ptr stream) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
     const int num_blocks = (n_elements + SYCL_ACC_BLOCK_SIZE - 1) / SYCL_ACC_BLOCK_SIZE;
     stream->parallel_for(sycl::nd_range<3>(sycl::range<3>(1, 1, num_blocks) * sycl::range<3>(1, 1, SYCL_ACC_BLOCK_SIZE),
                                            sycl::range<3>(1, 1, SYCL_ACC_BLOCK_SIZE)),
@@ -589,15 +713,103 @@ static inline void dispatch_ggml_sycl_op_fused_glu(ggml_backend_sycl_context & c
     }
 }
 
+// ne配列を引数とする。
+template<typename KernelInvoker, typename... Args>
+static inline void dispatch_ggml_sycl_op_fused_glu_dn(ggml_backend_sycl_context & ctx, ggml_tensor * dst, KernelInvoker kernel_invoker, Args&&... args) {
+    GGML_ASSERT(dst->src[0]->type == GGML_TYPE_F32 || dst->src[0]->type == GGML_TYPE_F16);
+    GGML_ASSERT(dst->type == GGML_TYPE_F32 || dst->type == GGML_TYPE_F16);
+    GGML_ASSERT(dst->src[0]->type == dst->type);
+
+    dpct::queue_ptr main_stream = ctx.stream();
+    SYCL_CHECK(ggml_sycl_set_device(ctx.device));
+    const ggml_tensor * src0 = dst->src[0];
+    const ggml_tensor * src1 = dst->src[1];
+    const int64_t nc = src1 ? src0->ne[0] : src0->ne[0] / 2;;
+    GGML_ASSERT(dst->ne[0] == nc);
+    GGML_ASSERT(ggml_is_contiguous_1(dst->src[0]));
+    GGML_ASSERT(ggml_is_contiguous(dst));
+    const int32_t swapped = ((const int32_t *) dst->op_params)[1];
+    void * src0_d = src0->data;
+    void * src1_d = src1 ? src1->data : src0->data;
+    const int64_t src0_o = src0->nb[1];
+    const int64_t src1_o = src1 ? src1->nb[1] : src0->nb[1];
+    void * dst_d = dst->data;
+    if (src1) {
+        GGML_ASSERT(ggml_is_contiguous_1(src1));
+        GGML_ASSERT(src1->nb[0] == ggml_element_size(src1));
+        GGML_ASSERT(src1->ne[0] == nc);
+        GGML_ASSERT(src0->type == src1->type);
+    }
+    switch (dst->type) {
+        case GGML_TYPE_F16:
+            {
+                sycl::half * src0_p = (sycl::half *) src0_d;
+                sycl::half * src1_p = (sycl::half *) src1_d;
+
+                    if (!src1) {
+                        src0_p += swapped ? nc : 0;
+                        src1_p += swapped ? 0 : nc;
+                    }
+                kernel_invoker(src0_p,
+                               src1_p,
+                               (sycl::half *) dst_d,
+                               //ggml_nelements(dst),
+                               dst->ne,
+                               dst->nb,
+                               src0->nb,
+                               src1 ? src1->nb : src0->nb,
+                               nc,
+                               src0_o / sizeof(sycl::half),
+                               src1_o / sizeof(sycl::half),
+                               sizeof(sycl::half),
+                               sizeof(sycl::half),
+                               main_stream,
+                               std::forward<Args>(args)...);
+                break;
+            }
+        case GGML_TYPE_F32:
+            {
+                float * src0_p = (float *) src0_d;
+                float * src1_p = (float *) src1_d;
+
+                    if (!src1) {
+                        src0_p += swapped ? nc : 0;
+                        src1_p += swapped ? 0 : nc;
+                    }
+
+                kernel_invoker(src0_p,
+                               src1_p,
+                               (float *) dst_d,
+                               //ggml_nelements(dst),
+                               dst->ne,
+                               dst->nb,
+                               src0->nb,
+                               src1 ? src1->nb : src0->nb,
+                               nc,
+                               src0_o / sizeof(float),
+                               src1_o / sizeof(float),
+                               sizeof(float),
+                               sizeof(float),
+                               main_stream,
+                               std::forward<Args>(args)...);
+                break;
+            }
+        default:
+            GGML_ABORT("GGML tensor type not supported!\n");
+    }
+}
+
 template<typename F>
 static inline void ggml_sycl_op_unary(
         ggml_backend_sycl_context & ctx, ggml_tensor * dst, F func) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
 
     ggml_tensor * src0 = dst->src[0];
 
     const int64_t ne0  = dst->ne[0];
     const int64_t ne1  = dst->ne[1];
     const int64_t ne2  = dst->ne[2];
+    const int64_t ne3  = dst->ne[3];
 
     const size_t  nb0  = src0->nb[0];
     const size_t  nb1  = src0->nb[1];
@@ -620,9 +832,9 @@ static inline void ggml_sycl_op_unary(
 
             if (contiguous) {
                 stream->parallel_for(
-                    sycl::nd_range<1>(sycl::range<1>(num_blocks) * sycl::range<1>(256),
-                                      sycl::range<1>(256)),
-                    [=](sycl::nd_item<1> item_ct1) [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
+                sycl::nd_range<1>(sycl::range<1>(num_blocks) * sycl::range<1>(256),
+                                  sycl::range<1>(256)),
+                [=](sycl::nd_item<1> item_ct1) [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
                         unary_op_flat_kernel(src, dst_ptr, k_elements, item_ct1, func);
                     });
             } else {
@@ -635,15 +847,16 @@ static inline void ggml_sycl_op_unary(
                     sycl::nd_range<1>(sycl::range<1>(num_blocks) * sycl::range<1>(256),
                                       sycl::range<1>(256)),
                     [=](sycl::nd_item<1> item_ct1) [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
-                        unary_op_generic_kernel(
-                            src, dst_ptr, k_elements,
-                            ne0_fd, ne1_fd, ne2_fd,
-                            nb0, nb1, nb2, nb3,
-                            nbd0, nbd1, nbd2, nbd3,
-                            item_ct1,
-                            func
-                        );
-                    });
+                    unary_op_generic_kernel(
+                        src, dst_ptr, k_elements,
+                        //ne0, ne1, ne2, ne3,
+                        ne0_fd, ne1_fd, ne2_fd,
+                        nb0, nb1, nb2, nb3,
+                        nbd0, nbd1, nbd2, nbd3,
+                        item_ct1,
+                        func
+                    );
+                });
             }
         });
 }
@@ -679,6 +892,7 @@ static inline void ggml_sycl_op_unary_gated(
 
 
 static inline void ggml_sycl_op_arange(ggml_backend_sycl_context & ctx, ggml_tensor * dst) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
     GGML_ASSERT(dst->type == GGML_TYPE_F32);
     float start, stop, step;
     memcpy(&start, dst->op_params, sizeof(float));
@@ -780,6 +994,7 @@ static inline void ggml_sycl_op_expm1(ggml_backend_sycl_context & ctx, ggml_tens
 }
 
 static inline void ggml_sycl_op_log(ggml_backend_sycl_context & ctx, ggml_tensor * dst) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
     ggml_sycl_detail::dispatch_ggml_sycl_op_unary(ctx, dst,
         [](const auto* src, auto* dst_ptr, int k_elements, queue_ptr stream) {
             const int num_blocks = ceil_div(k_elements, SYCL_EXP_BLOCK_SIZE); // Using EXP block size
@@ -818,6 +1033,7 @@ static inline void ggml_sycl_op_sigmoid(ggml_backend_sycl_context & ctx, ggml_te
 }
 
 static inline void ggml_sycl_op_sqrt(ggml_backend_sycl_context & ctx, ggml_tensor * dst) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
     ggml_sycl_detail::dispatch_ggml_sycl_op_unary(ctx, dst,
         [](const auto* src, auto* dst_ptr, int k_elements, queue_ptr stream) {
             const int num_blocks = ceil_div(k_elements, SYCL_SQRT_BLOCK_SIZE);
@@ -831,6 +1047,7 @@ static inline void ggml_sycl_op_sqrt(ggml_backend_sycl_context & ctx, ggml_tenso
 }
 
 static inline void ggml_sycl_op_sin(ggml_backend_sycl_context & ctx, ggml_tensor * dst) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
     ggml_sycl_detail::dispatch_ggml_sycl_op_unary(ctx, dst,
         [](const auto* src, auto* dst_ptr, int k_elements, queue_ptr stream) {
             const int num_blocks = ceil_div(k_elements, SYCL_SIN_BLOCK_SIZE);
@@ -844,6 +1061,7 @@ static inline void ggml_sycl_op_sin(ggml_backend_sycl_context & ctx, ggml_tensor
 }
 
 static inline void ggml_sycl_op_cos(ggml_backend_sycl_context & ctx, ggml_tensor * dst) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
     ggml_sycl_detail::dispatch_ggml_sycl_op_unary(ctx, dst,
         [](const auto* src, auto* dst_ptr, int k_elements, queue_ptr stream) {
             const int num_blocks = ceil_div(k_elements, SYCL_SIN_BLOCK_SIZE); // Using SIN block size
@@ -857,6 +1075,7 @@ static inline void ggml_sycl_op_cos(ggml_backend_sycl_context & ctx, ggml_tensor
 }
 
 static inline void ggml_sycl_op_leaky_relu(ggml_backend_sycl_context & ctx, ggml_tensor * dst) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
     float negative_slope;
     memcpy(&negative_slope, dst->op_params, sizeof(float));
     ggml_sycl_detail::dispatch_ggml_sycl_op_unary(ctx, dst,
@@ -872,6 +1091,7 @@ static inline void ggml_sycl_op_leaky_relu(ggml_backend_sycl_context & ctx, ggml
 }
 
 static inline void ggml_sycl_op_sqr(ggml_backend_sycl_context & ctx, ggml_tensor * dst) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
     ggml_sycl_detail::dispatch_ggml_sycl_op_unary(ctx, dst,
         [](const auto* src, auto* dst_ptr, int k_elements, queue_ptr stream) {
             const int num_blocks = ceil_div(k_elements, SYCL_SQR_BLOCK_SIZE);
@@ -885,6 +1105,7 @@ static inline void ggml_sycl_op_sqr(ggml_backend_sycl_context & ctx, ggml_tensor
 }
 
 static inline void ggml_sycl_op_clamp(ggml_backend_sycl_context & ctx, ggml_tensor * dst) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
     float min_val;
     float max_val;
     memcpy(&min_val, dst->op_params, sizeof(float));
@@ -974,18 +1195,149 @@ static inline void ggml_sycl_op_acc(ggml_backend_sycl_context & ctx, ggml_tensor
 }
 
 static inline void ggml_sycl_op_geglu(ggml_backend_sycl_context & ctx, ggml_tensor * dst) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
+    //ggml_sycl_detail::dispatch_ggml_sycl_op_fused_glu(ctx, dst,
+    //    [](const auto* x_ptr, const auto* g_ptr, auto* dst_ptr, uint64_t k, uint64_t n, uint64_t o0, uint64_t o1, queue_ptr main_stream) {
+    //        const uint32_t num_blocks = ceil_div(k, SYCL_GELU_BLOCK_SIZE);
+    //        main_stream->parallel_for(
+    //                sycl::nd_range<1>((num_blocks * sycl::range<1>(SYCL_GELU_BLOCK_SIZE)),
+    //                sycl::range<1>(SYCL_GELU_BLOCK_SIZE)), [=](sycl::nd_item<1> item_ct1) [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
+    //            gated_op_fused_geglu(x_ptr, g_ptr, dst_ptr, k, n, o0, o1, item_ct1);
+    //        });
     ggml_sycl_detail::ggml_sycl_op_unary_gated(ctx, dst, [](auto x) {
         return op_gelu(x);
     });
 }
 
 static inline void ggml_sycl_op_reglu(ggml_backend_sycl_context & ctx, ggml_tensor * dst) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
+    //ggml_sycl_detail::dispatch_ggml_sycl_op_fused_glu(ctx, dst,
+    //    [](const auto* x_ptr, const auto* g_ptr, auto* dst_ptr, uint64_t k, uint64_t n, uint64_t o0, uint64_t o1, queue_ptr main_stream) {
+    //        const uint32_t num_blocks = ceil_div((uint32_t)k, SYCL_RELU_BLOCK_SIZE); // Using RELU block size for reglu
+    //        main_stream->parallel_for(
+    //                sycl::nd_range<1>((num_blocks * sycl::range<1>(SYCL_RELU_BLOCK_SIZE)),
+    //                sycl::range<1>(SYCL_RELU_BLOCK_SIZE)), [=](sycl::nd_item<1> item_ct1) [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
+    //            gated_op_fused_reglu(x_ptr, g_ptr, dst_ptr, k, n, o0, o1, item_ct1);
+    //        });
     ggml_sycl_detail::ggml_sycl_op_unary_gated(ctx, dst, [](auto x) {
         return op_relu(x);
     });
 }
 
+#define SYCL_SILU_WORK_GROUP_NUM 9999
+#define SYCL_SILU_WORK_GROUP_SIZE 32
+#define SYCL_SILU_SUB_GROUP_SIZE 16
+
 static inline void ggml_sycl_op_swiglu(ggml_backend_sycl_context & ctx, ggml_tensor * dst) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
+//    ggml_sycl_detail::dispatch_ggml_sycl_op_fused_glu_dn(
+//        ctx, dst,
+//        [](const auto* x_ptr,
+//        const auto* g_ptr,
+//        auto* dst_ptr,
+//        int64_t * ne,
+//        size_t * nb,
+//        const size_t nb0[GGML_MAX_DIMS],
+//        const size_t nb1[GGML_MAX_DIMS],
+//        //const size_t * nb0,
+//        //const size_t * nb1,
+//        uint64_t n,
+//        uint64_t o0,
+//        uint64_t o1,
+//        size_t s0,
+//        size_t s1,
+//        queue_ptr main_stream)
+//        {
+//            size_t k = ne[0] * ne[1] * ne[2] * ne[3];
+//            const uint32_t num_blocks = ceil_div((uint32_t)k, SYCL_SILU_BLOCK_SIZE); // Using SILU block size for swiglu
+//            GGML_SYCL_DEBUG("[SYCL] %s num_blocks:%d SYCL_SILU_BLOCK_SIZE:%d ne(%zu, %zu, %zu, %zu) n:%ld\n", __func__, num_blocks, SYCL_SILU_BLOCK_SIZE, ne[0], ne[1], ne[2], ne[3], n);
+//
+//
+//            int sd[4] = {0, 1, 2, 3};
+//            //const int64_t tne[4] = {ne0, ne1, ne2, ne3};
+//            //const size_t  tnb[4] = {nb0, nb1, nb2, nb3};
+//            //ggml_sortDim(sd, tne);
+//            ggml_sortDim(sd, ne, nb);
+//
+//            int64_t ane[GGML_MAX_DIMS];
+//            int64_t ane1[GGML_MAX_DIMS];
+//            size_t ans[GGML_MAX_DIMS];
+//            size_t ans0[GGML_MAX_DIMS];
+//            size_t ans1[GGML_MAX_DIMS];
+//
+//            //// size
+//            //size_t dims = GGML_MAX_DIMS;
+//            //while(dims > 0 && ne[sd[dims - 1]] == 1){
+//            //    dims --;
+//            //}
+//            for(int i=0; i<GGML_MAX_DIMS; i++){
+//                ane[i]  = ne[sd[i]];
+//                //ane1[i] = src1->ne[sd[i]];
+//                ans[i]   = nb[sd[i]] / s0;  // 本来はdstの型のバイト数だが、前提条件としてすべての型サイズは一致している。なのでsrc0の型サイズを使用
+//                ans0[i]  = nb0[sd[i]] / s0;
+//                ans1[i]  = nb1[sd[i]] / s1;
+//            }
+//            const size_t dims = ggml_number_effective_dims(ane);
+//
+//            GGML_SYCL_DEBUG("[SYCL] %s ne(%ld, %ld, %ld, %ld) nb(%zu, %zu, %zu, %zu) sd(%d, %d, %d, %d)\n", __func__, ne[0], ne[1], ne[2], ne[3], nb[0], nb[1], nb[2], nb[3], sd[0], sd[1], sd[2], sd[3]);
+//
+//            sycl::range<3> world(ne[3]*ne[2], ne[1], ne[0]);
+//            //sycl::range<3> local(1, 1, SYCL_BCAST_WORK_GROUP_SIZE);
+//            sycl::range<3> local;
+//            adjustment_local(local, world, SYCL_SILU_WORK_GROUP_SIZE, SYCL_SILU_SUB_GROUP_SIZE);
+//
+//if(dims<GGML_MAX_DIMS){
+//            GGML_SYCL_DEBUG("[SYCL] %s parallel_for gated_op_fused_swiglu_one_u3d\n", __func__);
+//        ggml_sycl_looper(world, local, SYCL_SILU_WORK_GROUP_NUM, main_stream,
+//            [=](sycl::range<3> global, sycl::range<3> offset){
+//
+//                auto e =
+//            main_stream->parallel_for(
+//                //sycl::nd_range<1>((num_blocks * sycl::range<1>(SYCL_SILU_BLOCK_SIZE)), sycl::range<1>(SYCL_SILU_BLOCK_SIZE)),
+//                //[=](sycl::nd_item<1> item_ct1) [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
+//                sycl::nd_range<3>(global, local),
+//                [=](sycl::nd_item<3> item_ct1)
+//                //[[sycl::reqd_sub_group_size(WARP_SIZE)]]
+//                [[sycl::reqd_sub_group_size(SYCL_SILU_SUB_GROUP_SIZE)]]
+//                {
+//                    gated_op_fused_swiglu_one_u3d(x_ptr, g_ptr, dst_ptr, k, n, o0, o1,
+//                        ane,
+//                        //nb,
+//                        ans, ans0, ans1,
+//                        offset,
+//                        dims,
+//                        item_ct1);
+//                });
+//           SyclQueueEventWatcher::getInstance().SetEvent(e);
+//
+//           });
+//
+//}else{
+//            GGML_SYCL_DEBUG("[SYCL] %s parallel_for gated_op_fused_swiglu_one\n", __func__);
+//        ggml_sycl_looper(world, local, SYCL_SILU_WORK_GROUP_NUM, main_stream,
+//            [=](sycl::range<3> global, sycl::range<3> offset){
+//
+//                auto e =
+//            main_stream->parallel_for(
+//                //sycl::nd_range<1>((num_blocks * sycl::range<1>(SYCL_SILU_BLOCK_SIZE)), sycl::range<1>(SYCL_SILU_BLOCK_SIZE)),
+//                //[=](sycl::nd_item<1> item_ct1) [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
+//                sycl::nd_range<3>(global, local),
+//                [=](sycl::nd_item<3> item_ct1)
+//                //[[sycl::reqd_sub_group_size(WARP_SIZE)]]
+//                [[sycl::reqd_sub_group_size(SYCL_SILU_SUB_GROUP_SIZE)]]
+//                {
+//                    gated_op_fused_swiglu_one(x_ptr, g_ptr, dst_ptr, k, n, o0, o1,
+//                        ane,
+//                        //nb,
+//                        ans, ans0, ans1,
+//                        offset,
+//                        dims,
+//                        item_ct1);
+//                });
+//           SyclQueueEventWatcher::getInstance().SetEvent(e);
+//
+//           });
+//}
     ggml_sycl_detail::ggml_sycl_op_unary_gated(ctx, dst, [](auto x) {
         return op_silu(x);
     });
@@ -1030,6 +1382,7 @@ static void swiglu_oai_sycl(const T *       x,
                             const float     alpha,
                             const float     limit,
                             dpct::queue_ptr stream) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
     const int64_t num_blocks = (k + SYCL_GLU_BLOCK_SIZE - 1) / SYCL_GLU_BLOCK_SIZE;
     stream->parallel_for(sycl::nd_range<3>(sycl::range<3>(1, 1, num_blocks) * sycl::range<3>(1, 1, SYCL_GLU_BLOCK_SIZE),
                                            sycl::range<3>(1, 1, SYCL_GLU_BLOCK_SIZE)),
@@ -1039,6 +1392,7 @@ static void swiglu_oai_sycl(const T *       x,
 }
 
 void ggml_sycl_op_swiglu_oai(ggml_backend_sycl_context & ctx, ggml_tensor * dst) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
     const ggml_tensor * src0 = dst->src[0];
     const ggml_tensor * src1 = dst->src[1];
     void * src0_d = src0->data;
@@ -1083,12 +1437,30 @@ void ggml_sycl_op_swiglu_oai(ggml_backend_sycl_context & ctx, ggml_tensor * dst)
 }
 
 static inline void ggml_sycl_op_geglu_erf(ggml_backend_sycl_context & ctx, ggml_tensor * dst) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
+    //ggml_sycl_detail::dispatch_ggml_sycl_op_fused_glu(ctx, dst,
+    //    [](const auto* x_ptr, const auto* g_ptr, auto* dst_ptr, uint64_t k, uint64_t n, uint64_t o0, uint64_t o1, queue_ptr main_stream) {
+    //        const uint32_t num_blocks = ceil_div(k, SYCL_GELU_BLOCK_SIZE);
+    //        main_stream->parallel_for(
+    //                sycl::nd_range<1>((num_blocks * sycl::range<1>(SYCL_GELU_BLOCK_SIZE)),
+    //                sycl::range<1>(SYCL_GELU_BLOCK_SIZE)), [=](sycl::nd_item<1> item_ct1) [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
+    //            gated_op_fused_geglu_erf(x_ptr, g_ptr, dst_ptr, k, n, o0, o1, item_ct1);
+    //        });
     ggml_sycl_detail::ggml_sycl_op_unary_gated(ctx, dst, [](auto x) {
         return op_gelu_erf(x);
     });
 }
 
 static inline void ggml_sycl_op_geglu_quick(ggml_backend_sycl_context & ctx, ggml_tensor * dst) {
+    GGML_SYCL_DEBUG("[SYCL] %s\n", __func__);
+    //ggml_sycl_detail::dispatch_ggml_sycl_op_fused_glu(ctx, dst,
+    //    [](const auto* x_ptr, const auto* g_ptr, auto* dst_ptr, uint64_t k, uint64_t n, uint64_t o0, uint64_t o1, queue_ptr main_stream) {
+    //        const uint32_t num_blocks = ceil_div(k, SYCL_GELU_BLOCK_SIZE);
+    //        main_stream->parallel_for(
+    //                sycl::nd_range<1>((num_blocks * sycl::range<1>(SYCL_GELU_BLOCK_SIZE)),
+    //                sycl::range<1>(SYCL_GELU_BLOCK_SIZE)), [=](sycl::nd_item<1> item_ct1) [[sycl::reqd_sub_group_size(WARP_SIZE)]] {
+    //            gated_op_fused_geglu_quick(x_ptr, g_ptr, dst_ptr, k, n, o0, o1, item_ct1);
+    //        });
     ggml_sycl_detail::ggml_sycl_op_unary_gated(ctx, dst, [](auto x) {
         return op_gelu_quick(x);
     });
