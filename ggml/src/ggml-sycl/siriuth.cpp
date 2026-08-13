@@ -129,7 +129,8 @@ void SyclQueueEventWatcher::WaitForSubmit()
             //std::this_thread::sleep_for(std::chrono::milliseconds(SLEEP_TIME));
             std::this_thread::sleep_for(std::chrono::microseconds(SLEEP_TIME));
             sleep_cnt++;
-            sleep_time = MIN(sleep_time * 2, SLEEP_TIME_MAX);
+            //sleep_time = MIN(sleep_time * 2, SLEEP_TIME_MAX);
+            sleep_time = MIN(sleep_time * 1.2, SLEEP_TIME_MAX);
             chk_cnt++;
         }
     }
@@ -160,10 +161,13 @@ void SyclQueueEventWatcher::WaitForSubmit()
 }
 
 // 要素数が多いもの順で並べる
-void sortDim(int* d, const int64_t ne[4]){
+//void sortDim(int* d, const int64_t ne[4]){
+void ggml_sortDim(int* d, const int64_t ne[GGML_MAX_DIMS]){
     //int d[4] = {0, 1, 2, 3}
-    for(int i = 0; i < (4 - 1); i++){
-        for(int j = i+1; j < 4; j++){
+    //for(int i = 0; i < (4 - 1); i++){
+    for(int i = 0; i < (GGML_MAX_DIMS - 1); i++){
+        //for(int j = i+1; j < 4; j++){
+        for(int j = i+1; j < GGML_MAX_DIMS; j++){
             if(ne[d[i]] < ne[d[j]]){
                 std::swap(d[i], d[j]);
             }
@@ -175,10 +179,13 @@ void sortDim(int* d, const int64_t ne[4]){
 // データ間隔
 // 要素数が１以外でデータの間隔が短いもの
 // 要素数が1のものは問答無用で後ろへ
-void sortDim(int* d, const int64_t ne[4], const int64_t nb[4]){
+//void sortDim(int* d, const int64_t ne[4], const size_t nb[4]){
+void ggml_sortDim(int* d, const int64_t ne[GGML_MAX_DIMS], const size_t nb[GGML_MAX_DIMS]){
     //int d[4] = {0, 1, 2, 3}
-    for(int i = 0; i < (4 - 1); i++){
-        for(int j = i+1; j < 4; j++){
+    //for(int i = 0; i < (4 - 1); i++){
+    for(int i = 0; i < (GGML_MAX_DIMS - 1); i++){
+        //for(int j = i+1; j < 4; j++){
+        for(int j = i+1; j < GGML_MAX_DIMS; j++){
             if((ne[d[i]] == 1 && ne[d[j]] != 1) || (nb[d[i]] > nb[d[j]])){
                 std::swap(d[i], d[j]);
             }
@@ -187,18 +194,42 @@ void sortDim(int* d, const int64_t ne[4], const int64_t nb[4]){
     //return d;
 }
 
+// Effective number of dimensions 有効な次元数
+// ne配列を次元の末尾から参照して1以外の次元数を返す
+// 例)
+// ne(4, 1024, 1, 1) -> 2
+// ne(1, 1, 123, 1) -> 3 --> sorDimで ne(123, 1, 1, 1)へ変形 -> 1となる。
+// sortDimしたあとに使用することを想定。4次元配列未満（3次元配列以下）ならrage<3>でなにも考慮する必要がない。
+size_t ggml_number_effective_dims(const int64_t ne[GGML_MAX_DIMS]){
+    size_t dims = GGML_MAX_DIMS;
+    while(dims > 0 && ne[dims - 1] == 1){
+        dims --;
+    }
+    return dims;
+}
+
 // worldからglobalとlocalを調整する。
+// ->フェーズ1 一番大きい次元に割り当てを行う。
+// 次元数に応じて割り振りを行う。
+//
+// hppに記述してテンプレートも試したが上手くいかない…
 void adjustment_local(sycl::range<3> &local, const sycl::range<3> world,
+//template <int Dimensions>
+//void adjustment_local(sycl::range<Dimensions> &local, const sycl::range<Dimensions> world,
     const int group_size, const int sub_group_size){
     GGML_SYCL_DEBUG("[SYCL] %s world(%zu, %zu, %zu) group:%d sub:%d\n", __func__, world[0], world[1], world[2], group_size, sub_group_size);
-    GGML_SYCL_DEBUG("[SYCL] %s sizeof:%zu extend:%zu\n", __func__, sizeof(world), std::extent<decltype(world)>::value);
+    //GGML_SYCL_DEBUG("[SYCL] %s sizeof:%zu extend:%zu\n", __func__, sizeof(world), std::extent<decltype(world)>::value);
+    //GGML_SYCL_DEBUG("[SYCL] %s size():%zu\n", __func__, world.size());
+    // 一番数字の大きい次元を求める
     int max_idx = 0;
-    //for(int i = 1; i < sizeof(world); i++){
     for(int i = 1; i < 3; i++){
+    //for(int i = 1; i < sizeof(world); i++){
+    //for(int i = 1; i <  world.size(); i++){
         if(world[max_idx] < world[i])max_idx=i;
     }
-    GGML_SYCL_DEBUG("[SYCL] %s max_idx:%d\n", __func__, max_idx);
+    // 一番数字の大きい次元にworkgroupを与える。
     //for(int i=0; i < sizeof(local); i++)local[i]=(i==max_idx?group_size:1);
     for(int i=0; i < 3; i++)local[i]=(i==max_idx?group_size:1);
-    GGML_SYCL_DEBUG("[SYCL] %s local(%zu, %zu, %zu)\n", __func__, local[0], local[1], local[2]);
+    //for(int i=0; i < local->size(); i++)local[i]=(i==max_idx?group_size:1);
+    GGML_SYCL_DEBUG("[SYCL] %s max_idx:%d local(%zu, %zu, %zu)\n", __func__, max_idx, local[0], local[1], local[2]);
 }
