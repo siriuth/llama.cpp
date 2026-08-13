@@ -1,6 +1,7 @@
 #include "norm.hpp"
 #include "ggml-sycl/common.hpp"
 #include "ggml-sycl/presets.hpp"
+#include "siriuth.hpp"
 
 static void norm_f32(const float* x, float* dst, const int ncols,
     const int64_t src_stride_col, const int64_t src_stride_row, const int64_t src_stride_channel, const int64_t src_stride_sample,
@@ -151,9 +152,10 @@ template <bool do_multiply = false>
 static void rms_norm_f32(const float* x, float* dst, const int ncols,
     const int64_t src_stride_col, const int64_t src_stride_row, const int64_t src_stride_channel, const int64_t src_stride_sample,
     const int64_t dst_stride_col, const int64_t dst_stride_row, const int64_t dst_stride_channel, const int64_t dst_stride_sample,
+    //const float eps, const sycl::nd_item<3>& item_ct1, float* s_sum, int block_size) {
     const float eps, const sycl::nd_item<3>& item_ct1, float* s_sum, int block_size,
-    const float* mul = nullptr, const int64_t mul_stride_row = 0, const int64_t mul_stride_channel = 0,
-    const int64_t mul_stride_sample = 0, const int mul_nrows = 0, const int mul_nchannels = 0, const int mul_nsamples = 0) {
+        const float* mul = nullptr, const int64_t mul_stride_row = 0, const int64_t mul_stride_channel = 0,
+        const int64_t mul_stride_sample = 0, const int mul_nrows = 0, const int mul_nchannels = 0, const int mul_nsamples = 0) {
 
     const int nrows = item_ct1.get_group_range(2);
     const int nchannels = item_ct1.get_group_range(1);
@@ -255,6 +257,7 @@ static void norm_f32_sycl(const float * x, float * dst, const int ncols, const i
     const int64_t src_stride_col, const int64_t src_stride_row, const int64_t src_stride_channel, const int64_t src_stride_sample,
     const int64_t dst_stride_col, const int64_t dst_stride_row, const int64_t dst_stride_channel, const int64_t dst_stride_sample,
         const float eps, queue_ptr stream, int device) {
+    GGML_SYCL_DEBUG("[SYCL] %s ncols:%d nsamples:%d nchannels:%d nrows:%d\n", __func__, ncols, nsamples, nchannels, nrows);
 
     const sycl::range<3> global_dims(nsamples, nchannels, nrows);
     if (ncols < 1024) {
@@ -390,12 +393,12 @@ static void rms_norm_f32_sycl(const float* x, float* dst, const int ncols, const
 }
 
 static void rms_norm_mul_f32_sycl(const float* x, const float* mul, float* dst, const int ncols, const int nrows,
-        const int nchannels, const int nsamples,
-        const int64_t src_stride_col, const int64_t src_stride_row, const int64_t src_stride_channel, const int64_t src_stride_sample,
-        const int64_t dst_stride_col, const int64_t dst_stride_row, const int64_t dst_stride_channel, const int64_t dst_stride_sample,
-        const int64_t mul_stride_row, const int64_t mul_stride_channel, const int64_t mul_stride_sample,
-        const int mul_nrows, const int mul_nchannels, const int mul_nsamples,
-        const float eps, queue_ptr stream, int device) {
+    const int nchannels, const int nsamples,
+    const int64_t src_stride_col, const int64_t src_stride_row, const int64_t src_stride_channel, const int64_t src_stride_sample,
+    const int64_t dst_stride_col, const int64_t dst_stride_row, const int64_t dst_stride_channel, const int64_t dst_stride_sample,
+    const int64_t mul_stride_row, const int64_t mul_stride_channel, const int64_t mul_stride_sample,
+    const int mul_nrows, const int mul_nchannels, const int mul_nsamples,
+    const float eps, queue_ptr stream, int device) {
     const sycl::range<3> global_dims(nsamples, nchannels, nrows);
     if (ncols < 1024) {
         const sycl::range<3> block_dims(1, 1, WARP_SIZE);
