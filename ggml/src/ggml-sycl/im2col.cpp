@@ -11,9 +11,21 @@
 //
 
 #include "im2col.hpp"
+#include <sycl/device.hpp>
 
+#include "siriuth.hpp"
+
+#define MAX_GRIDDIM_Y 65535
 #define MAX_GRIDDIM_Z 65535
+//#define MAX_GRIDDIM_Y 512
+//#define MAX_GRIDDIM_Z 512
+#define SYCL_IM2COL_WORK_GROUP_NUM 99999
+//#define SYCL_IM2COL_WORK_GROUP_SIZE 32
+#define SYCL_IM2COL_MAX_WORK_GROUP_SIZE 256
+#define SYCL_IM2COL_SUB_GROUP_SIZE 16
+//#define SYCL_IM2COL_SUB_GROUP_SIZE 32
 
+/*
 template <typename T>
 static  void im2col_kernel(
         const float * x, T * dst,
@@ -21,7 +33,7 @@ static  void im2col_kernel(
         int64_t IC_IH_IW, int64_t IH_IW, int64_t N_OH, int64_t KH_KW, int64_t IC_KH_KW,
         int s0, int s1, int p0, int p1, int d0, int d1) {
     auto          item_ct1 = sycl::ext::oneapi::this_work_item::get_nd_item<3>();
-    const int64_t i        = item_ct1.get_local_id(2) + item_ct1.get_group(2) * item_ct1.get_local_range(2);
+    const int64_t i = item_ct1.get_local_id(2) + item_ct1.get_group(2) * item_ct1.get_local_range(2);
     if (i >= IC_KH_KW) {
         return;
     }
@@ -31,24 +43,150 @@ static  void im2col_kernel(
     const int64_t ikh = rem / KW;
     const int64_t ikw = rem - ikh * KW;
 
-    const int64_t iow = item_ct1.get_group(1);
-    for (int64_t iz = item_ct1.get_group(0); iz < N_OH; iz += MAX_GRIDDIM_Z) {
-        const int64_t  in = iz / OH;
-        const int64_t  ioh = iz - in * OH;
+    //const int64_t iow = item_ct1.get_group(1);
+    for (int64_t iow = item_ct1.get_group(1); iow < OW; iow += MAX_GRIDDIM_Y) {
+        for (int64_t iz = item_ct1.get_group(0); iz < N_OH; iz += MAX_GRIDDIM_Z) {
+            const int64_t  in = iz / OH;
+            const int64_t  ioh = iz - in * OH;
 
-        const int64_t iiw = iow * s0 + ikw * d0 - p0;
-        const int64_t iih = ioh * s1 + ikh * d1 - p1;
+            const int64_t iiw = iow * s0 + ikw * d0 - p0;
+            const int64_t iih = ioh * s1 + ikh * d1 - p1;
 
-        const int64_t offset_dst =
-            ((in * OH + ioh) * OW + iow) * IC_KH_KW + iic * KH_KW + ikh * KW + ikw;
+            const int64_t offset_dst =
+                ((in * OH + ioh) * OW + iow) * IC_KH_KW + iic * KH_KW + ikh * KW + ikw;
 
-        if (iih < 0 || iih >= IH || iiw < 0 || iiw >= IW) {
-            dst[offset_dst] = 0.0f;
-        } else {
-            const int64_t offset_src = iic * IC_IH_IW + in * IH_IW;
-            dst[offset_dst] = x[offset_src + iih * IW + iiw];
+            if (iih < 0 || iih >= IH || iiw < 0 || iiw >= IW) {
+                dst[offset_dst] = 0.0f;
+            } else {
+                const int64_t offset_src = iic * IC_IH_IW + in * IH_IW;
+                dst[offset_dst] = x[offset_src + iih * IW + iiw];
+            }
         }
     }
+
+    GGML_UNUSED(IC);
+    GGML_UNUSED(KH);
+}
+*/
+
+/*
+template <typename T>
+static  void im2col_one_kernel(
+        const float * x, T * dst,
+        int64_t IC, int64_t IW, int64_t IH, int64_t OH, int64_t OW, int64_t KW, int64_t KH,
+        int64_t IC_IH_IW, int64_t IH_IW, int64_t N_OH, int64_t KH_KW, int64_t IC_KH_KW,
+        int s0, int s1, int p0, int p1, int d0, int d1) {
+    auto          item_ct1 = sycl::ext::oneapi::this_work_item::get_nd_item<3>();
+    const int64_t i = item_ct1.get_local_id(2)
+                     + item_ct1.get_group(2) * item_ct1.get_local_range(2);
+    if (i >= IC_KH_KW) {
+        return;
+    }
+
+    const int64_t iic = i / (KH_KW);
+    const int64_t rem =
+                      i - iic * KH_KW;
+    const int64_t ikh =
+                      rem / KW
+                      ;
+    const int64_t ikw =
+                      rem - ikh * KW
+                       ;
+    const int64_t iow =
+                        item_ct1.get_group(1) * item_ct1.get_local_range(1)
+                        + item_ct1.get_local_id(1);
+    const int64_t iz  =
+                        item_ct1.get_group(0) * item_ct1.get_local_range(0)
+                        + item_ct1.get_local_id(0);
+            const int64_t  in = iz / OH;
+            const int64_t  ioh = iz - in * OH;
+
+            const int64_t iiw =
+//                                (item_ct1.get_local_range(1) * item_ct1.get_group(1) + item_ct1.get_local_id(1)) * s0
+                                iow * s0
+                                + ikw * d0
+                                - p0;
+            const int64_t iih =
+//                                (item_ct1.get_local_range(0) * item_ct1.get_group(0) + item_ct1.get_local_id(0)) * s1
+                                ioh * s1
+                                + ikh * d1
+                                - p1;
+            const int64_t offset_dst =
+//                     + (item_ct1.get_group(0) * item_ct1.get_local_range(0)
+//                     + item_ct1.get_local_id(0))
+//                       * item_ct1.get_group_range(1) * item_ct1.get_group_range(2)
+//                     + (item_ct1.get_group(1) * item_ct1.get_local_range(1)
+//                     + item_ct1.get_local_id(1))
+//                       * item_ct1.get_group_range(2)
+//                     + item_ct1.get_group(2) * item_ct1.get_local_range(2)
+//                     + item_ct1.get_local_id(2)
+
+
+//                     + (item_ct1.get_group(0) * item_ct1.get_local_range(0)
+//                     + item_ct1.get_local_id(0))
+//                       * item_ct1.get_local_range(1) * item_ct1.get_local_range(2)
+//                     + (item_ct1.get_group(1) * item_ct1.get_local_range(1)
+//                     + item_ct1.get_local_id(1))
+//                       * item_ct1.get_local_range(2)
+//                     + item_ct1.get_group(2) * item_ct1.get_local_range(2)
+//                     + item_ct1.get_local_id(2)
+
+//                     ;
+
+                 ((in * OH + ioh) * OW + iow) * IC_KH_KW + iic * KH_KW + ikh * KW + ikw;
+//                (item_ct1.get_group(0) * OW + item_ct1.get_group(1)) * IC_KH_KW
+//                (item_ct1.get_group_range(0) * item_ct1.get_group(0) + item_ct1.get_group(1))
+//                  * item_ct1.get_group_range(1)
+//              + (i / (KH_KW)) * KH_KW + (i / KW - iic * KH) * KW;
+//              + i + (i - iic * KH * KW);
+//              + i + i - iic * KH * KW;
+//              + i * 2 - iic * KH * KW;
+//              + i);
+//                + item_ct1.get_local_range(2) * item_ct1.get_group(2)
+//                + item_ct1.get_local_id(2)
+//                ;
+//                const int64_t offset_src = iic * IC_IH_IW + in * IH_IW;
+//                dst[offset_dst] = x[offset_src + iih * IW + iiw];
+
+            dst[offset_dst] = ((iih < 0 || iih >= IH || iiw < 0 || iiw >= IW)?0.0f
+                              :x[iic * IC_IH_IW + in * IH_IW + iih * IW + iiw]);
+
+    GGML_UNUSED(IC);
+    GGML_UNUSED(KH);
+}
+*/
+
+template <typename T>
+static void im2col_one_offset_kernel(
+    const float * x, T * dst,
+    int64_t IC, int64_t IW, int64_t IH,
+    int64_t OH, int64_t OW, int64_t KW, int64_t KH,
+    int64_t IC_IH_IW, int64_t IH_IW, int64_t N_OH, int64_t KH_KW, int64_t IC_KH_KW,
+    int s0, int s1, int p0, int p1, int d0, int d1,
+    const sycl::range<3> offset, const sycl::nd_item<3> &item_ct1)
+{
+    const int64_t i = item_ct1.get_global_id(2) + offset[2];
+
+    if (i >= IC_KH_KW) {
+        return;
+    }
+
+    const int64_t iic = i / (KH_KW);
+    const int64_t rem = i - iic * KH_KW;
+    const int64_t ikh = rem / KW;
+    const int64_t ikw = rem - ikh * KW;
+    const int64_t iow = item_ct1.get_global_id(1) + offset[1];
+    const int64_t iz  = item_ct1.get_global_id(0) + offset[0];
+    const int64_t in  = iz / OH;
+    const int64_t ioh = iz - in * OH;
+
+    const int64_t iiw = iow * s0 + ikw * d0 - p0;
+    const int64_t iih = ioh * s1 + ikh * d1 - p1;
+    const int64_t offset_dst =
+        ((in * OH + ioh) * OW + iow) * IC_KH_KW + iic * KH_KW + ikh * KW + ikw;
+
+    dst[offset_dst] = ((iih < 0 || iih >= IH || iiw < 0 || iiw >= IW)?
+        0.0f : x[iic * IC_IH_IW + in * IH_IW + iih * IW + iiw]);
 
     GGML_UNUSED(IC);
     GGML_UNUSED(KH);
@@ -56,39 +194,85 @@ static  void im2col_kernel(
 
 // im2col: [N, IC, IH, IW] => [N, OH, OW, IC*KH*KW]
 template <typename T>
-static void im2col_sycl(const float *   x,
-                        T *             dst,
-                        int64_t         IW,
-                        int64_t         IH,
-                        int64_t         OW,
-                        int64_t         OH,
-                        int64_t         KW,
-                        int64_t         KH,
-                        int64_t         IC,
-                        int64_t         N,
-                        int64_t         IC_IH_IW,
-                        int64_t         IH_IW,
-                        int             s0,
-                        int             s1,
-                        int             p0,
-                        int             p1,
-                        int             d0,
-                        int             d1,
+static void im2col_sycl(const float * x, T * dst,
+                        int64_t IW, int64_t IH,
+                        int64_t OW, int64_t OH,
+                        int64_t KW, int64_t KH,
+                        int64_t IC,
+                        int64_t N,
+                        int64_t IC_IH_IW, int64_t IH_IW,
+                        int s0, int s1, int p0, int p1, int d0, int d1,
                         dpct::queue_ptr stream) {
+/*
     const int64_t IC_KH_KW = IC * KH * KW;
     const int64_t num_blocks = (IC_KH_KW + SYCL_IM2COL_BLOCK_SIZE - 1) / SYCL_IM2COL_BLOCK_SIZE;
     const int64_t N_OH = N * OH;
     const int64_t KH_KW = KW*KH;
-    dpct::dim3    block_nums(num_blocks, OW, MIN(N_OH, MAX_GRIDDIM_Z));
-    /*
-    DPCT1049:73: The work-group size passed to the SYCL kernel may exceed the limit. To get the device limit, query info::device::max_work_group_size. Adjust the work-group size if needed.
-    */
-    stream->parallel_for(sycl::nd_range<3>(block_nums * sycl::range<3>(1, 1, MIN(IC_KH_KW, SYCL_IM2COL_BLOCK_SIZE)),
-                                           sycl::range<3>(1, 1, MIN(IC_KH_KW, SYCL_IM2COL_BLOCK_SIZE))),
-                         [=](sycl::nd_item<3> item_ct1) {
-                             im2col_kernel(x, dst, IC, IW, IH, OH, OW, KW, KH, IC_IH_IW, IH_IW, N_OH, KH_KW, IC_KH_KW,
-                                           s0, s1, p0, p1, d0, d1);
+    size_t local_z = 1;
+    size_t local_y = 1;
+    size_t local_x = MIN(IC_KH_KW, SYCL_IM2COL_BLOCK_SIZE);
+    // block_nums の各次元 (x, y, z) から、SYCLの (z, y, x) に正しくマッピングしつつ size_t で計算
+    size_t global_z = (size_t)MIN(N_OH, MAX_GRIDDIM_Z) * local_z; // MIN(N_OH, MAX_GRIDDIM_Z)
+    size_t global_y = (size_t)MIN(OW, MAX_GRIDDIM_Y) * local_y; // OW
+    size_t global_x = (size_t)num_blocks * local_x; // num_blocks * local_x
+    sycl::range<3> global_range(global_z, global_y, global_x);
+    sycl::range<3> local_range(local_z, local_y, local_x);
+    GGML_SYCL_DEBUG("[SYCL] %s num_blocks:%ld OW:%ld N_OH:%ld\n", __func__, num_blocks, OW, N_OH);
+    GGML_SYCL_DEBUG("[SYCL] %s global(%ld, %ld, %ld) local(%ld, %ld, %ld)\n", __func__, global_z, global_y, global_x, local_z, local_y, local_x);
+    stream->parallel_for(sycl::nd_range<3>(global_range, local_range),
+                         [=](sycl::nd_item<3> item_ct1)
+                         [[sycl::reqd_sub_group_size(SYCL_IM2COL_SUB_GROUP_SIZE)]]
+                         {
+//                             im2col_kernel(
+                             im2col_one_kernel(
+                                               x, dst,
+                                               IC, IW, IH, OH, OW, KW, KH,
+                                               IC_IH_IW, IH_IW, N_OH, KH_KW, IC_KH_KW,
+                                               s0, s1, p0, p1, d0, d1);
                          });
+//    GGML_SYCL_DEBUG("[SYCL] %s stream wait()\n", __func__);
+//    stream->wait();
+//    GGML_SYCL_DEBUG("[SYCL] %s stream wait() end\n", __func__);
+*/
+    // グループサイズの大きさを少し変動させてみる。
+    const int64_t IC_KH_KW = IC * KH * KW;
+
+    int64_t work_group_num = 512;
+    //int64_t work_group_size = SYCL_IM2COL_MAX_WORK_GROUP_SIZE;
+    int64_t i = 1;
+    while(work_group_num * SYCL_IM2COL_SUB_GROUP_SIZE * i < IC_KH_KW
+        && SYCL_IM2COL_SUB_GROUP_SIZE * i < SYCL_IM2COL_MAX_WORK_GROUP_SIZE){
+        i ++;
+    }
+    const int64_t work_group_size = MIN(SYCL_IM2COL_SUB_GROUP_SIZE * i, SYCL_IM2COL_MAX_WORK_GROUP_SIZE);
+
+    //const int64_t num_blocks = (IC_KH_KW + work_group_num - 1) / work_group_num;
+    const int64_t N_OH = N * OH;
+    const int64_t KH_KW = KW*KH;
+    //sycl::range<3> world(ne03*ne02, ne01, ne00 / 2);
+    //sycl::range<3> local(1, 1, SYCL_DEQUANTIZE_WORK_GROUP_SIZE);
+    // localが基本単位なら、MAX_GRIDDIM_Z/Yの制限は理論的には必要ない。処理は重いけど。
+    sycl::range<3> world((size_t)MIN(N_OH, MAX_GRIDDIM_Z), (size_t)MIN(OW, MAX_GRIDDIM_Y), IC_KH_KW);
+    sycl::range<3> local(1, 1, work_group_size);
+    ggml_sycl_looper(world, local, SYCL_IM2COL_WORK_GROUP_NUM, stream,
+        [=](sycl::range<3> global, sycl::range<3> offset){
+            auto e =
+            stream->parallel_for(sycl::nd_range<3>(global, local),
+                [=](sycl::nd_item<3> item_ct1)
+                [[sycl::reqd_sub_group_size(SYCL_IM2COL_SUB_GROUP_SIZE)]]
+                {
+                    im2col_one_offset_kernel(
+                        x, dst,
+                        IC, IW, IH, OH, OW, KW, KH,
+                        IC_IH_IW, IH_IW, N_OH, KH_KW, IC_KH_KW,
+                        s0, s1, p0, p1, d0, d1,
+                        offset, item_ct1);
+                });
+            SyclQueueEventWatcher::getInstance().SetEvent(e);
+
+        }
+    );
+
 }
 
 static void im2col_sycl_f16(const float *   x,
@@ -142,6 +326,8 @@ void ggml_sycl_op_im2col(ggml_backend_sycl_context & ctx, ggml_tensor * dst) {
     float * dst_d = (float *)dst->data;
     dpct::queue_ptr     stream = ctx.stream();
 
+    sycl::device dev = stream->get_device();
+    GGML_SYCL_DEBUG("[SYCL] %s max_work_group_size:%ld\n", __func__, dev.get_info<sycl::info::device::max_work_group_size>());
     GGML_ASSERT(src1->type == GGML_TYPE_F32);
     GGML_ASSERT( dst->type == GGML_TYPE_F16 || dst->type == GGML_TYPE_F32);
 
@@ -154,6 +340,8 @@ void ggml_sycl_op_im2col(ggml_backend_sycl_context & ctx, ggml_tensor * dst) {
 
     const bool is_2D = ((const int32_t*)(dst->op_params))[6] == 1;
 
+    GGML_SYCL_DEBUG("[SYCL] %s s(%d, %d) p(%d, %d) d(%d, %d) is2D:%s\n", __func__, s0, s1, p0, p1, d0, d1, (is_2D?"true":"false"));
+
     const int64_t IC = src1->ne[is_2D ? 2 : 1];
     const int64_t IH = is_2D ? src1->ne[1] : 1;
     const int64_t IW =         src1->ne[0];
@@ -164,9 +352,17 @@ void ggml_sycl_op_im2col(ggml_backend_sycl_context & ctx, ggml_tensor * dst) {
     const int64_t OH = is_2D ? dst->ne[2] : 1;
     const int64_t OW =         dst->ne[1];
 
+    GGML_SYCL_DEBUG("[SYCL] %s IC:%ld IH:%ld IW:%ld KH:%ld KW:%ld OH:%ld OW:%ld\n", __func__, IC, IH, IW, KH, KW, OH, OW);
+
+    // なんか違ってね？ 多分 nb[is2D?3:1] nb[is2D?2:0] になるんじゃないかと推測するが…
+    // でも変更すると下流で調整されているっぽくてまともに出力されないｗ
     const int64_t IC_IH_IW = src1->nb[is_2D ? 2 : 1] / 4; // nb is byte offset, src is type float32
     const int64_t N        = src1->ne[is_2D ? 3 : 2];
     const int64_t IH_IW    = src1->nb[is_2D ? 3 : 2] / 4; // nb is byte offset, src is type float32
+
+    GGML_SYCL_DEBUG("[SYCL] %s IC_IH_IW:%ld N:%ld IH_IW:%ld\n", __func__, IC_IH_IW, N, IH_IW);
+    GGML_SYCL_DEBUG("[SYCL] %s src1 nb[]/4(%ld, %ld, %ld, %ld)\n", __func__,
+        src1->nb[0] / 4, src1->nb[1] / 4, src1->nb[2] / 4, src1->nb[3] / 4);
 
     if(dst->type == GGML_TYPE_F16) {
         im2col_sycl_f16(src1_d, (sycl::half *) dst_d, IW, IH, OW, OH, KW, KH, IC, N, IC_IH_IW, IH_IW, s0, s1, p0, p1,
