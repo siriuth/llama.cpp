@@ -18,6 +18,7 @@
 #include "ggml.h"
 
 #define SYCL_QUEUE_WAIT_TIMMING 32
+//#define SYCL_QUEUE_WAIT_SIZE 16
 //#define SYCL_QUEUE_WAIT_SIZE 32
 #define SYCL_QUEUE_WAIT_SIZE 48
 #define SYCL_EVENTS_SIZE SYCL_QUEUE_WAIT_SIZE+10
@@ -265,8 +266,9 @@ void ggml_sycl_adjusted_looper(
     }
 }
 
-void sortDim(int *, const int64_t *);
-void sortDim(int *, const int64_t *, const int64_t *);
+void ggml_sortDim(int *, const int64_t *);
+void ggml_sortDim(int *, const int64_t *, const size_t *);
+size_t ggml_number_effective_dims(const int64_t *);
 void adjustment_local(sycl::range<3> &, const sycl::range<3>, const int, const int);
 
 #endif
