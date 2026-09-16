@@ -184,6 +184,8 @@ void concat_impl_sycl(ggml_backend_sycl_context & ctx, ggml_tensor *dst) {
             const size_t size0 = ggml_nbytes(src0);
             const size_t size1 = ggml_nbytes(src1);
 
+            //SYCL_CHECK(CHECK_TRY_ERROR(stream->memcpy(dst_d, src0_d, size0).wait()));
+            //SYCL_CHECK(CHECK_TRY_ERROR(stream->memcpy(dst_d + size0 / type_size, src1_d, size1).wait()));
             SYCL_CHECK(CHECK_TRY_ERROR(stream->memcpy(dst_d, src0_d, size0)));
             SYCL_CHECK(CHECK_TRY_ERROR(stream->memcpy(dst_d + size0 / type_size, src1_d, size1)));
         }
@@ -459,7 +461,6 @@ static void concat_impl_q8_0_sycl(ggml_backend_sycl_context & ctx, ggml_tensor *
             dst->nb[0], dst->nb[1], dst->nb[2], dst->nb[3], dim);
     }
 }
-
 void ggml_sycl_op_concat(ggml_backend_sycl_context & ctx, ggml_tensor *dst) {
 
     switch (dst->type) {
