@@ -1,11 +1,15 @@
 #include "norm.hpp"
 #include "ggml-sycl/common.hpp"
 #include "ggml-sycl/presets.hpp"
+#include "siriuth.hpp"
 
 static void norm_f32(const float* x, float* dst, const int ncols,
     const int64_t src_stride_col, const int64_t src_stride_row, const int64_t src_stride_channel, const int64_t src_stride_sample,
     const int64_t dst_stride_col, const int64_t dst_stride_row, const int64_t dst_stride_channel, const int64_t dst_stride_sample,
     const float eps, const sycl::nd_item<3>& item_ct1, sycl::float2* s_sum, int block_size) {
+
+    const int nrows = item_ct1.get_group_range(2);
+    const int nchannels = item_ct1.get_group_range(1);
 
     const int nthreads = item_ct1.get_local_range(2);
     const int sample  = item_ct1.get_group(0);
@@ -144,17 +148,21 @@ static void group_norm_f32(const float* x, float* dst, const int group_size, con
     }
 }
 
+//template <bool do_multiply = false>
 template <bool do_multiply = false, bool do_add = false>
 static void rms_norm_f32(const float* x, float* dst, const int ncols,
     const int64_t src_stride_col, const int64_t src_stride_row, const int64_t src_stride_channel, const int64_t src_stride_sample,
     const int64_t dst_stride_col, const int64_t dst_stride_row, const int64_t dst_stride_channel, const int64_t dst_stride_sample,
+    //const float eps, const sycl::nd_item<3>& item_ct1, float* s_sum, int block_size) {
     const float eps, const sycl::nd_item<3>& item_ct1, float* s_sum, int block_size,
-    const float* mul = nullptr, const int64_t mul_stride_row = 0, const int64_t mul_stride_channel = 0,
+        const float* mul = nullptr, const int64_t mul_stride_row = 0, const int64_t mul_stride_channel = 0,
     const int64_t mul_stride_sample = 0, const int mul_nrows = 0, const int mul_nchannels = 0, const int mul_nsamples = 0,
     const float* add = nullptr, const int64_t add_stride_row = 0, const int64_t add_stride_channel = 0,
     const int64_t add_stride_sample = 0, const int add_nrows = 0, const int add_nchannels = 0, const int add_nsamples = 0) {
 
     static_assert(!do_add || do_multiply, "fusing add is not supported without multiplying");
+    const int nrows = item_ct1.get_group_range(2);
+    const int nchannels = item_ct1.get_group_range(1);
 
     const int sample  = item_ct1.get_group(0);
     const int channel = item_ct1.get_group(1);
@@ -232,6 +240,8 @@ static void l2_norm_f32(const float * x, float * dst, const int ncols,
     const int64_t src_stride_sample, const int64_t dst_stride_col, const int64_t dst_stride_row,
     const int64_t dst_stride_channel, const int64_t dst_stride_sample, const float eps,
     const sycl::nd_item<3>& item_ct1, float* s_sum, const int block_size) {
+    const int nrows     = item_ct1.get_group_range(2);
+    const int nchannels = item_ct1.get_group_range(1);
 
     const int row     = item_ct1.get_group(2);
     const int channel = item_ct1.get_group(1);
@@ -260,6 +270,7 @@ static void norm_f32_sycl(const float * x, float * dst, const int ncols, const i
     const int64_t src_stride_col, const int64_t src_stride_row, const int64_t src_stride_channel, const int64_t src_stride_sample,
     const int64_t dst_stride_col, const int64_t dst_stride_row, const int64_t dst_stride_channel, const int64_t dst_stride_sample,
         const float eps, queue_ptr stream, int device) {
+    GGML_SYCL_DEBUG("[SYCL] %s ncols:%d nsamples:%d nchannels:%d nrows:%d\n", __func__, ncols, nsamples, nchannels, nrows);
 
     const sycl::range<3> global_dims(nsamples, nchannels, nrows);
     if (ncols < 1024) {
@@ -395,12 +406,12 @@ static void rms_norm_f32_sycl(const float* x, float* dst, const int ncols, const
 }
 
 static void rms_norm_mul_f32_sycl(const float* x, const float* mul, float* dst, const int ncols, const int nrows,
-        const int nchannels, const int nsamples,
-        const int64_t src_stride_col, const int64_t src_stride_row, const int64_t src_stride_channel, const int64_t src_stride_sample,
-        const int64_t dst_stride_col, const int64_t dst_stride_row, const int64_t dst_stride_channel, const int64_t dst_stride_sample,
-        const int64_t mul_stride_row, const int64_t mul_stride_channel, const int64_t mul_stride_sample,
-        const int mul_nrows, const int mul_nchannels, const int mul_nsamples,
-        const float eps, queue_ptr stream, int device) {
+    const int nchannels, const int nsamples,
+    const int64_t src_stride_col, const int64_t src_stride_row, const int64_t src_stride_channel, const int64_t src_stride_sample,
+    const int64_t dst_stride_col, const int64_t dst_stride_row, const int64_t dst_stride_channel, const int64_t dst_stride_sample,
+    const int64_t mul_stride_row, const int64_t mul_stride_channel, const int64_t mul_stride_sample,
+    const int mul_nrows, const int mul_nchannels, const int mul_nsamples,
+    const float eps, queue_ptr stream, int device) {
     const sycl::range<3> global_dims(nsamples, nchannels, nrows);
     if (ncols < 1024) {
         const sycl::range<3> block_dims(1, 1, WARP_SIZE);
@@ -438,14 +449,14 @@ static void rms_norm_mul_f32_sycl(const float* x, const float* mul, float* dst, 
 }
 
 static void rms_norm_mul_add_f32_sycl(const float* x, const float* mul, const float* add, float* dst,
-        const int ncols, const int nrows, const int nchannels, const int nsamples,
-        const int64_t src_stride_col, const int64_t src_stride_row, const int64_t src_stride_channel, const int64_t src_stride_sample,
-        const int64_t dst_stride_col, const int64_t dst_stride_row, const int64_t dst_stride_channel, const int64_t dst_stride_sample,
-        const int64_t mul_stride_row, const int64_t mul_stride_channel, const int64_t mul_stride_sample,
-        const int mul_nrows, const int mul_nchannels, const int mul_nsamples,
-        const int64_t add_stride_row, const int64_t add_stride_channel, const int64_t add_stride_sample,
-        const int add_nrows, const int add_nchannels, const int add_nsamples,
-        const float eps, queue_ptr stream, int device) {
+    const int ncols, const int nrows, const int nchannels, const int nsamples,
+    const int64_t src_stride_col, const int64_t src_stride_row, const int64_t src_stride_channel, const int64_t src_stride_sample,
+    const int64_t dst_stride_col, const int64_t dst_stride_row, const int64_t dst_stride_channel, const int64_t dst_stride_sample,
+    const int64_t mul_stride_row, const int64_t mul_stride_channel, const int64_t mul_stride_sample,
+    const int mul_nrows, const int mul_nchannels, const int mul_nsamples,
+    const int64_t add_stride_row, const int64_t add_stride_channel, const int64_t add_stride_sample,
+    const int add_nrows, const int add_nchannels, const int add_nsamples,
+    const float eps, queue_ptr stream, int device) {
     const sycl::range<3> global_dims(nsamples, nchannels, nrows);
     if (ncols < 1024) {
         const sycl::range<3> block_dims(1, 1, WARP_SIZE);
