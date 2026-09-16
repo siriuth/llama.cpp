@@ -82,6 +82,7 @@ static __dpct_inline__ T op_elu(T x) {
     return (x > static_cast<T>(0.f)) ? x : op_expm1(x);
 }
 
+/* ==========
 template<typename T>
 static __dpct_inline__ T op_tanh(T x) {
     if constexpr (std::is_same_v<T, sycl::ext::oneapi::bfloat16>) {
@@ -118,6 +119,7 @@ template<typename T>
 static __dpct_inline__ T op_silu(T x) {
     return x / (static_cast<T>(1.0f) + op_exp(-x));
 }
+========== */
 
 template<typename T>
 static __dpct_inline__ T op_erf(T x) {
@@ -429,6 +431,7 @@ static void clamp(const T * x, T * dst, const float min, const float max, const 
     }
 }
 
+/* ==========
 template<typename T>
 static void gated_op_fused_geglu(const T * x, const T * g, T * dst, const uint64_t k, const uint64_t n, const uint64_t o0, const uint64_t o1, const sycl::nd_item<1> &item_ct1) {
     SYCL_GLOBAL_ID_LOOP(k, item_ct1) {
@@ -542,6 +545,7 @@ static void gated_op_fused_geglu_quick(const T * x, const T * g, T * dst, const 
         dst[i] = op_gelu_quick(x[j0]) * g[j1];
     }
 }
+========== */
 
 template<typename T, typename F>
 static void unary_gated_op_flat_kernel(const T * x, const T * g, T * dst, const uint64_t k, const sycl::nd_item<1> & item_ct1, F func) {
@@ -754,6 +758,7 @@ static inline void dispatch_ggml_sycl_op_fused_glu(ggml_backend_sycl_context & c
     }
 }
 
+/* ==========
 // ne配列を引数とする。
 template<typename KernelInvoker, typename... Args>
 static inline void dispatch_ggml_sycl_op_fused_glu_dn(ggml_backend_sycl_context & ctx, ggml_tensor * dst, KernelInvoker kernel_invoker, Args&&... args) {
@@ -839,6 +844,7 @@ static inline void dispatch_ggml_sycl_op_fused_glu_dn(ggml_backend_sycl_context 
             GGML_ABORT("GGML tensor type not supported!\n");
     }
 }
+========== */
 
 template<typename F>
 static inline void ggml_sycl_op_unary(
