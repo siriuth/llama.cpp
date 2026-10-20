@@ -2171,7 +2171,7 @@ struct ggml_sycl_pool_host : public ggml_sycl_pool {
     queue_ptr qptr;
     int       device;
 
-    inline static int counter{ 0 };
+    //inline static int counter{ 0 };
 
     struct ggml_sycl_buffer {
         void * ptr  = nullptr;
@@ -8237,4 +8237,5 @@ ggml_backend_t ggml_backend_sycl_init(int device) {
 
     return sycl_backend;
 }
+
 GGML_BACKEND_DL_IMPL(ggml_backend_sycl_reg)
