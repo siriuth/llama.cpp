@@ -251,7 +251,7 @@ static void dequantize_row_q4_0_sycl_reorder(const void *vx, dst_t *y, const int
     // decrease global range when it exceeds the max int; the kernel loops to cover the rest
     const int64_t wg_size  = downsample_sycl_global_range(n_groups, SYCL_DEQUANTIZE_BLOCK_SIZE);
     //GGML_SYCL_DEBUG("[SYCL] %s k:%ld n_warp:%d WARP_K:%d WARP_SIZE:%d QK8_0:%d\n", __func__, k, n_warp, WARP_K, WARP_SIZE, QK4_0);
-    GGML_SYCL_DEBUG("[SYCL] %s k:%ld n_groups:%d wg_size:%d SYCL_DEQUANTIZE_BLOCK_SIZE:%d QK4_0:%d\n", __func__, k, n_groups, wg_size, SYCL_DEQUANTIZE_BLOCK_SIZE, QK4_0);
+    GGML_SYCL_DEBUG("[SYCL] %s k:%ld n_groups:%d wg_size:%ld SYCL_DEQUANTIZE_BLOCK_SIZE:%d QK4_0:%d\n", __func__, k, n_groups, wg_size, SYCL_DEQUANTIZE_BLOCK_SIZE, QK4_0);
     //GGML_ASSERT(k % 2 == 0);
     //stream->parallel_for(sycl::nd_range<3>(sycl::range<3>(1, 1, n_warp) *
     //    sycl::range<3>(1, 1, WARP_SIZE),
@@ -279,7 +279,7 @@ static void dequantize_row_q8_0_sycl_reorder(const void *vx, dst_t *y, const int
     const int64_t n_groups = ceil_div(k / 2, SYCL_DEQUANTIZE_BLOCK_SIZE);
     // decrease global range when it exceeds the max int; the kernel loops to cover the rest
     const int64_t wg_size  = downsample_sycl_global_range(n_groups, SYCL_DEQUANTIZE_BLOCK_SIZE);
-    GGML_SYCL_DEBUG("[SYCL] %s k:%ld n_groups:%d wg_size:%d SYCL_DEQUANTIZE_BLOCK_SIZE:%d QK8_0:%d\n", __func__, k, n_groups, wg_size, SYCL_DEQUANTIZE_BLOCK_SIZE, QK8_0);
+    GGML_SYCL_DEBUG("[SYCL] %s k:%ld n_groups:%d wg_size:%ld SYCL_DEQUANTIZE_BLOCK_SIZE:%d QK8_0:%d\n", __func__, k, n_groups, wg_size, SYCL_DEQUANTIZE_BLOCK_SIZE, QK8_0);
     //stream->parallel_for(sycl::nd_range<3>(sycl::range<3>(1, 1, n_warp) *
     //    sycl::range<3>(1, 1, WARP_SIZE),
     //    sycl::range<3>(1, 1, WARP_SIZE)),
@@ -380,10 +380,12 @@ static void dequantize_row_q4_K_sycl_reorder(const void * vx, dst_t * y, const i
         sycl::local_accessor<uint8_t, 1> scale_local_acc(sycl::range<1>(12), cgh);
 
         cgh.parallel_for(sycl::nd_range<1>(sycl::range<1>(global_size), sycl::range<1>(local_size)),
-                         [=](sycl::nd_item<1> item_ct1)
-            [[sycl::reqd_sub_group_size(16)]]
-            {
-                             dequantize_block_q4_K_reorder(vx, y, get_pointer(scale_local_acc), item_ct1, nb);
+            //             [=](sycl::nd_item<1> item_ct1)
+            //[[sycl::reqd_sub_group_size(16)]]
+            //{
+            //                 dequantize_block_q4_K_reorder(vx, y, get_pointer(scale_local_acc), item_ct1, nb);
+                         [=](sycl::nd_item<1> item_ct1) {
+                             dequantize_block_q4_K_reorder(vx, y + item_ct1.get_group(0) * QK_K, item_ct1.get_group(0), get_pointer(scale_local_acc), item_ct1, nb);
                          });
     });
 }
