@@ -13,6 +13,8 @@
 //#include "common.hpp"
 #include "pad.hpp"
 
+#define SYCL_PAD_SUB_GROUP_SIZE 16
+
 static void pad_f32(const float * src, size_t s00, size_t s01, size_t s02, size_t s03,
                     float * dst,
                     const int lp0, const int rp0, const int lp1, const int rp1,
@@ -56,7 +58,9 @@ static void pad_f32_sycl(const float * src, size_t s00, size_t s01, size_t s02, 
     stream->parallel_for(
         sycl::nd_range<3>(grid * sycl::range<3>(1, 1, SYCL_PAD_BLOCK_SIZE),
                           sycl::range<3>(1, 1, SYCL_PAD_BLOCK_SIZE)),
-        [=](sycl::nd_item<3> item_ct1) {
+        [=](sycl::nd_item<3> item_ct1)
+        [[sycl::reqd_sub_group_size(SYCL_PAD_SUB_GROUP_SIZE)]]
+        {
             pad_f32(src, s00, s01, s02, s03, dst, lp0, rp0, lp1, rp1, lp2, rp2, lp3, rp3,
                     ne0, ne1, ne2, ne3, item_ct1);
         });
